@@ -1,0 +1,663 @@
+{
+  "memory_access_map": {
+    "agent_benefits": [
+      "Start tasks with the user's durable preferences, project context, and prior decisions.",
+      "Avoid asking the user to repeat context that another connected agent already learned.",
+      "Preserve decisions, corrections, artifacts, and daily deltas as RawEvents for Working-Agent governance.",
+      "Share useful memory across Codex, Claude, Cursor, Windsurf, and other MCP-capable agents."
+    ],
+    "automation_policy": {
+      "daily_tool": "memory_upload_daily_delta",
+      "required_metadata": [
+        "sync_source",
+        "external_memory_id",
+        "curated"
+      ],
+      "reuse_agent_profile": true,
+      "status_tool": "memory_sync_status"
+    },
+    "context_fields": {
+      "context_tiers": "L0 compressed prompt header, L1 layer summaries, L2 deep refs.",
+      "context_tree": "Directory-style paths for narrowing project/layer/type/memory leaves.",
+      "memory_evolution": "Review, promotion, validity, and compaction hints.",
+      "memory_layers": "working, episodic, semantic, procedural counts and policy.",
+      "relation_graph": "Connected memory nodes and edges for evidence chaining.",
+      "retrieval_trace": "Why each memory was retrieved and scored."
+    },
+    "habit_loop": {
+      "after": "Call memory_after_end with concise summary, decisions, actions, and artifacts.",
+      "before": "Call memory_before_start for nontrivial user/project work.",
+      "during": "Call memory_search when scope changes or facts are missing.",
+      "scheduled": "Call memory_upload_daily_delta from daily automation, then verify with memory_sync_status."
+    },
+    "name": "Life Memory Access Map",
+    "packaged_helpers": {
+      "automation_templates": "references/automation-templates.md provides Codex scheduled task, Windows Task Scheduler, and cron templates.",
+      "codex_config_writer": "scripts/write_codex_mcp_config.py writes Codex config.toml without PowerShell here-string quoting.",
+      "doctor": "scripts/doctor.py checks Python, API reachability, env vars, MCP stdio, memory_map, policy, and sync status.",
+      "installer": "scripts/install_life_memory_skill.py downloads the Skill, creates an agent, writes optional MCP config, and runs smoke tests.",
+      "payload_validator": "scripts/validate_memory_batch.py cleans risky identifiers before memory_sync_existing or memory_upload_daily_delta."
+    },
+    "principle": "Agents read committed memory through search/context tools and write only RawEvent-style inputs; the server owns extraction, policy, and durable commits.",
+    "quickstart": [
+      "Run the bootstrap script from the skill package.",
+      "Call memory_map immediately after MCP connects.",
+      "Use memory_before_start before substantial work and memory_after_end after finishing.",
+      "Use memory_sync_existing once for old memories and memory_upload_daily_delta for scheduled updates."
+    ],
+    "recommended_flow": [
+      {
+        "purpose": "Learn tool contracts and context fields.",
+        "step": "connect",
+        "tool": "memory_map"
+      },
+      {
+        "purpose": "Load context_pack before substantial work.",
+        "step": "pre_task",
+        "tool": "memory_before_start"
+      },
+      {
+        "purpose": "Search again when scope changes or details are needed.",
+        "step": "during_task",
+        "tool": "memory_search"
+      },
+      {
+        "purpose": "Preserve raw observations that may become memory.",
+        "step": "write_note",
+        "tool": "memory_upload_event"
+      },
+      {
+        "purpose": "Write summary, decisions, actions, and artifacts.",
+        "step": "finish_task",
+        "tool": "memory_after_end"
+      },
+      {
+        "purpose": "Upload new or changed external memories with stable external_id values.",
+        "step": "daily_sync",
+        "tool": "memory_upload_daily_delta"
+      },
+      {
+        "purpose": "Check processing, duplicate, work-case, and committed counts.",
+        "step": "verify",
+        "tool": "memory_sync_status"
+      }
+    ],
+    "system_goal": "A shared long-term memory layer for agents: read prior user/project context before work, write useful outcomes after work, and sync external agent memories without duplicating or losing provenance.",
+    "tool_groups": {
+      "media": [
+        "memory_create_link_artifact",
+        "memory_upload_media_base64",
+        "memory_list_media_artifacts",
+        "memory_get_media_artifact",
+        "memory_extract_media_artifact"
+      ],
+      "read": [
+        "memory_map",
+        "memory_before_start",
+        "memory_search",
+        "memory_sync_status",
+        "memory_policy_status"
+      ],
+      "test": [
+        "memory_test_roundtrip"
+      ],
+      "write": [
+        "memory_upload_event",
+        "memory_after_end",
+        "memory_sync_existing",
+        "memory_upload_daily_delta"
+      ]
+    },
+    "troubleshooting": {
+      "codex_config": "Use scripts/write_codex_mcp_config.py instead of one-line PowerShell here-strings.",
+      "codex_hot_reload": "If config.toml is written but tools are not visible, verify with the bundled stdio smoke test and restart or refresh Codex.",
+      "rtk_powershell": "Run PowerShell cmdlets through rtk powershell -NoProfile -Command; do not call cmdlets directly through rtk.",
+      "sync_500": "If one item succeeds but a batch fails, use ASCII slug ids, remove raw Windows paths/mojibake from identifier fields, and split batches.",
+      "sync_timeout": "For first full memory_sync_existing import, set trigger_extraction=false and verify RawEvents first.",
+      "working_agent_governance": "Uploads become RawEvents and only the Working Agent may govern them into formal memories."
+    },
+    "version": "3.0.0",
+    "write_rules": [
+      "Never write CommittedMemory directly.",
+      "Use memory_upload_event or memory_after_end for raw session facts.",
+      "Use memory_sync_existing for one-time imports and memory_upload_daily_delta for recurring imports.",
+      "Use stable external_id for every imported memory so reruns are idempotent.",
+      "Use media tools for URLs/files/images/audio/video instead of storing extracted content as facts."
+    ]
+  },
+  "skill_version": "3.0.0",
+  "tool_definitions": [
+    {
+      "description": "Search Aion Memory Nexus for context relevant to a question or task.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "description": "Optional project scope.",
+            "type": "string"
+          },
+          "query": {
+            "description": "Question or search query.",
+            "type": "string"
+          },
+          "recall_level": {
+            "default": "work_context",
+            "description": "task_only, work_context, personal_context, or full_trusted.",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 10,
+            "description": "Maximum memories to return.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "memory_search"
+    },
+    {
+      "description": "Call before starting work to retrieve the most relevant memory context.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "description": "Optional project scope.",
+            "type": "string"
+          },
+          "recall_level": {
+            "default": "work_context",
+            "description": "task_only, work_context, personal_context, or full_trusted.",
+            "type": "string"
+          },
+          "task": {
+            "description": "Current task description.",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 10,
+            "description": "Maximum memories to return.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "type": "object"
+      },
+      "name": "memory_before_start"
+    },
+    {
+      "description": "Call after finishing work to save a task summary, decisions, actions, and artifacts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "default": [],
+            "description": "Actions performed during the task.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "artifacts": {
+            "default": [],
+            "description": "Files, URLs, or other artifacts produced.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "decisions": {
+            "default": [],
+            "description": "Important decisions made during the task.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "project_id": {
+            "description": "Optional project scope.",
+            "type": "string"
+          },
+          "repo_id": {
+            "description": "Optional repository scope.",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Completed work summary.",
+            "type": "string"
+          },
+          "task": {
+            "description": "Task description.",
+            "type": "string"
+          },
+          "workspace_id": {
+            "description": "Optional workspace scope.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "name": "memory_after_end"
+    },
+    {
+      "description": "Append one raw event. The Working Agent will govern it asynchronously through a work case.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "Raw event content to preserve.",
+            "type": "string"
+          },
+          "dedupe": {
+            "default": true,
+            "description": "Skip if this agent already uploaded the same content.",
+            "type": "boolean"
+          },
+          "metadata": {
+            "default": {},
+            "description": "Additional event metadata.",
+            "type": "object"
+          },
+          "project_id": {
+            "description": "Optional project scope.",
+            "type": "string"
+          },
+          "repo_id": {
+            "description": "Optional repository scope.",
+            "type": "string"
+          },
+          "source_type": {
+            "default": "mcp",
+            "description": "agent, mcp, codex, openclaw, chatgpt, or obsidian.",
+            "type": "string"
+          },
+          "workspace_id": {
+            "description": "Optional workspace scope.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      },
+      "name": "memory_upload_event"
+    },
+    {
+      "description": "Import an external agent's existing memory store as RawEvents for review/extraction.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dedupe": {
+            "default": true,
+            "description": "Skip duplicate content per agent.",
+            "type": "boolean"
+          },
+          "default_project_id": {
+            "description": "Project applied when an item has no project_id.",
+            "type": "string"
+          },
+          "memories": {
+            "description": "Memory items to import. Keep batches under 100 items.",
+            "items": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "external_id": {
+                  "type": "string"
+                },
+                "memory_type": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": "object"
+                },
+                "project_id": {
+                  "type": "string"
+                },
+                "repo_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "source_name": {
+            "default": "agent_memory",
+            "description": "Name of the source memory store.",
+            "type": "string"
+          },
+          "trigger_extraction": {
+            "default": false,
+            "description": "Start Memory Agent extraction after import. For first full imports, prefer false and verify RawEvents first.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "memories"
+        ],
+        "type": "object"
+      },
+      "name": "memory_sync_existing"
+    },
+    {
+      "description": "Upload a daily batch of new/changed memories from an external agent.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "default_project_id": {
+            "description": "Project applied when an item has no project_id.",
+            "type": "string"
+          },
+          "memories": {
+            "description": "New or changed memory items since the previous upload.",
+            "items": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "external_id": {
+                  "type": "string"
+                },
+                "memory_type": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": "object"
+                },
+                "project_id": {
+                  "type": "string"
+                },
+                "repo_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "since": {
+            "description": "Lower-bound timestamp used by the caller for this delta.",
+            "type": "string"
+          },
+          "source_name": {
+            "default": "daily_agent_memory",
+            "description": "Name of the source memory store.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memories"
+        ],
+        "type": "object"
+      },
+      "name": "memory_upload_daily_delta"
+    },
+    {
+      "description": "Show recent sync status for the authenticated agent, including RawEvent, work-case, committed, duplicate, and error counts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 50,
+            "description": "Recent RawEvents to inspect.",
+            "type": "integer"
+          },
+          "project_id": {
+            "description": "Optional project filter.",
+            "type": "string"
+          },
+          "source_name": {
+            "description": "Optional source memory store filter.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "memory_sync_status"
+    },
+    {
+      "description": "Show the authenticated agent's server-side write and auto-commit policy summary without exposing tokens.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "memory_policy_status"
+    },
+    {
+      "description": "Return the Life Memory access map: recommended tool order, context fields, sync strategy, and write rules for agents.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "memory_map"
+    },
+    {
+      "description": "Run a real test chain: upload RawEvent, run Working-Agent governance, report work cases/formal memories, then search for the result.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "default": "Agent Memory Bridge roundtrip test: store a low-risk fact for MCP verification.",
+            "description": "Low-risk test content to write as a RawEvent.",
+            "type": "string"
+          },
+          "metadata": {
+            "default": {},
+            "description": "Additional test metadata.",
+            "type": "object"
+          },
+          "project_id": {
+            "default": "life-memory-system",
+            "description": "Project scope for the test.",
+            "type": "string"
+          },
+          "recall_level": {
+            "default": "work_context",
+            "description": "Recall level for search verification.",
+            "type": "string"
+          },
+          "source_name": {
+            "default": "agent_memory_bridge_roundtrip",
+            "description": "Sync source label for policy matching.",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "description": "Search result limit.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "memory_test_roundtrip"
+    },
+    {
+      "description": "List supported agent types and the current authenticated agent type.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "memory_list_types"
+    },
+    {
+      "description": "Create a link MediaArtifact for asynchronous webpage extraction. Use this for URLs instead of uploading them as facts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "extract": {
+            "default": true,
+            "description": "Queue extraction after creating the artifact.",
+            "type": "boolean"
+          },
+          "source_channel": {
+            "default": "mcp",
+            "description": "Source label.",
+            "type": "string"
+          },
+          "source_text": {
+            "description": "Optional surrounding text from the agent/user.",
+            "type": "string"
+          },
+          "sync": {
+            "default": false,
+            "description": "Extract synchronously before returning.",
+            "type": "boolean"
+          },
+          "url": {
+            "description": "Public http/https URL.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "name": "memory_create_link_artifact"
+    },
+    {
+      "description": "Upload a file, image, table, audio, or video as base64 media for asynchronous extraction.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content_base64": {
+            "description": "Base64-encoded file bytes.",
+            "type": "string"
+          },
+          "extract": {
+            "default": true,
+            "description": "Queue extraction after upload.",
+            "type": "boolean"
+          },
+          "filename": {
+            "description": "Original filename.",
+            "type": "string"
+          },
+          "media_type": {
+            "description": "Optional media type override.",
+            "type": "string"
+          },
+          "mime_type": {
+            "description": "Optional MIME type.",
+            "type": "string"
+          },
+          "source_channel": {
+            "default": "mcp",
+            "description": "Source label.",
+            "type": "string"
+          },
+          "sync": {
+            "default": false,
+            "description": "Extract synchronously before returning.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "filename",
+          "content_base64"
+        ],
+        "type": "object"
+      },
+      "name": "memory_upload_media_base64"
+    },
+    {
+      "description": "List recent media artifacts and extraction status.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "description": "Max artifacts.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "memory_list_media_artifacts"
+    },
+    {
+      "description": "Get safe details for one media artifact, including extracted note summary when available.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "description": "MediaArtifact id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id"
+        ],
+        "type": "object"
+      },
+      "name": "memory_get_media_artifact"
+    },
+    {
+      "description": "Synchronously trigger extraction for one media artifact when the caller needs immediate status.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "description": "MediaArtifact id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id"
+        ],
+        "type": "object"
+      },
+      "name": "memory_extract_media_artifact"
+    }
+  ]
+}

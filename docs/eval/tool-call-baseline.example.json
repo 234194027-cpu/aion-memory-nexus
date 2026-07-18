@@ -1,0 +1,31 @@
+{
+  "generated_at": "2026-07-12T00:00:00+00:00",
+  "user_id_opaque": "a1b2c3d4e5f6",
+  "samples_requested": 30,
+  "total_calls": 0,
+  "metrics": {
+    "success_count": 0,
+    "failure_count": 0,
+    "failure_rate": 0.0,
+    "read_memory_latency_ms": {
+      "avg": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "manage_task_list_latency_ms": {
+      "avg": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  },
+  "calls": [],
+  "privacy_notes": [
+    "All query content is hashed; no raw user query text is included in the output.",
+    "Only read-only tool calls (read_memory, manage_task list) are measured.",
+    "No tasks are created or modified during baseline collection."
+  ]
+}

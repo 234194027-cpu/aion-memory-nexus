@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible defect without including private data.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include production addresses, tokens, credentials, user content, database records, or media originals. Report security issues through SECURITY.md instead."
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal redacted reproduction
+      description: Include only safe, local or placeholder values.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true

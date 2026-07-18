@@ -1,0 +1,153 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from src.memory.models.raw_event import (
+    ProcessingStatus,
+    RawEvent,
+    SensitivityLevel,
+    SourceType,
+    VisibilityScope,
+)
+from src.shared.db.database import async_session, init_db
+from src.shared.db.database import Base
+from src.shared.utils.hash import compute_content_hash
+
+
+def test_stale_processing_event_can_be_reclaimed_without_reclaiming_a_fresh_lease() -> None:
+    from src.memory.tasks.memory_extraction import claim_event_for_extraction
+
+    async def run() -> None:
+        await init_db()
+        user_id = f"recovery-user-{uuid4().hex}"
+        stale_id = f"stale-{uuid4().hex}"
+        fresh_id = f"fresh-{uuid4().hex}"
+        now = datetime.now(timezone.utc)
+        async with async_session() as session:
+            session.add_all([
+                RawEvent(
+                    id=stale_id, user_id=user_id, source_type=SourceType.MANUAL, source_id="test",
+                    occurred_at=now, content="stale", content_hash=compute_content_hash("stale"),
+                    sensitivity=SensitivityLevel.NORMAL, visibility_scope=VisibilityScope.PROJECT,
+                    processing_status=ProcessingStatus.PROCESSING,
+                    processing_started_at=now - timedelta(minutes=30),
+                ),
+                RawEvent(
+                    id=fresh_id, user_id=user_id, source_type=SourceType.MANUAL, source_id="test",
+                    occurred_at=now, content="fresh", content_hash=compute_content_hash("fresh"),
+                    sensitivity=SensitivityLevel.NORMAL, visibility_scope=VisibilityScope.PROJECT,
+                    processing_status=ProcessingStatus.PROCESSING,
+                    processing_started_at=now,
+                ),
+            ])
+            await session.commit()
+            assert await claim_event_for_extraction(session, stale_id, now=now) is not None
+            assert await claim_event_for_extraction(session, fresh_id, now=now) is None
+            claimed = await session.get(RawEvent, stale_id)
+            # SQLite returns naive datetimes even for timezone-aware columns.
+            assert claimed.processing_heartbeat_at.replace(tzinfo=timezone.utc) == now
+            assert claimed.processing_result is None
+            await session.execute(delete(RawEvent).where(RawEvent.user_id == user_id))
+            await session.commit()
+
+    asyncio.run(run())
+
+
+def test_trigger_extraction_prefers_celery_enqueue(monkeypatch) -> None:
+    from src.memory.tasks import memory_extraction
+
+    enqueued: list[str] = []
+
+    monkeypatch.setattr(
+        memory_extraction.process_memory_event,
+        "delay",
+        lambda event_id: enqueued.append(event_id),
+    )
+
+    class UnexpectedThread:
+        def __init__(self, *args, **kwargs) -> None:
+            raise AssertionError("thread fallback should not start when Celery accepts the task")
+
+    monkeypatch.setattr(memory_extraction.threading, "Thread", UnexpectedThread)
+
+    memory_extraction.trigger_extraction("event-celery")
+
+    assert enqueued == ["event-celery"]
+
+
+def test_trigger_extraction_falls_back_to_daemon_thread_when_enqueue_fails(monkeypatch) -> None:
+    from src.memory.tasks import memory_extraction
+
+    def fail_enqueue(event_id: str) -> None:
+        raise ConnectionError(f"broker unavailable for {event_id}")
+
+    started: list[tuple[object, tuple[object, ...], bool]] = []
+
+    class RecordingThread:
+        def __init__(self, *, target, args) -> None:
+            self.target = target
+            self.args = args
+            self.daemon = False
+
+        def start(self) -> None:
+            started.append((self.target, self.args, self.daemon))
+
+    monkeypatch.setattr(memory_extraction.process_memory_event, "delay", fail_enqueue)
+    monkeypatch.setattr(memory_extraction.threading, "Thread", RecordingThread)
+
+    memory_extraction.trigger_extraction("event-fallback")
+
+    assert started == [(memory_extraction._threaded_extraction, ("event-fallback",), True)]
+
+
+def test_active_working_failure_never_bypasses_the_working_agent(monkeypatch) -> None:
+    """A runtime outage is retryable; no formal-memory bypass may be used."""
+    from src.memory.models.committed_memory import CommittedMemory
+    from src.memory.tasks import memory_extraction
+    from src.shared.config import settings
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            event_id = "active-runtime-fallback-event"
+            async with session_factory() as session:
+                session.add(RawEvent(
+                    id=event_id,
+                    user_id="u-active-fallback",
+                    source_type=SourceType.MANUAL,
+                    source_id="test",
+                    occurred_at=datetime.now(timezone.utc),
+                    content="我要搬去杭州",
+                    content_hash=compute_content_hash("我要搬去杭州"),
+                    sensitivity=SensitivityLevel.NORMAL,
+                    visibility_scope=VisibilityScope.PROJECT,
+                    processing_status=ProcessingStatus.QUEUED,
+                ))
+                await session.commit()
+
+            async def broken_active(*_args, **_kwargs):
+                raise TimeoutError("simulated runtime timeout")
+
+            monkeypatch.setattr(settings, "AGENT_RUNTIME_ENABLED", True)
+            monkeypatch.setattr(settings, "WORKING_AGENT_ACTIVE_ENABLED", True)
+            monkeypatch.setattr(memory_extraction, "async_session", session_factory)
+            monkeypatch.setattr("src.execution.runtime.working_agent.run_working_active", broken_active)
+
+            await memory_extraction._process_memory_event(event_id)
+
+            async with session_factory() as session:
+                event = await session.get(RawEvent, event_id)
+                committed = list((await session.execute(select(CommittedMemory))).scalars())
+                assert event.processing_status is ProcessingStatus.FAILED
+                assert event.processing_result == "failed"
+                assert committed == []
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())

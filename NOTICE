@@ -1,0 +1,54 @@
+人生记忆系统（Life Memory System）
+Copyright (c) 2026 234194027-cpu
+
+本项目使用 MIT License，全文见仓库根目录 LICENSE 文件。
+
+==========================================================================
+第三方来源与参考清单
+==========================================================================
+
+本项目的部分设计思想参考了以下第三方开源项目与论文。详细来源、许可证、
+吸收方式和是否复制代码的清单见：
+
+    docs/licenses/third-party-attributions.md
+
+其中，Nous Research Hermes Agent（MIT License）作为本系统 Agent Runtime 的
+主要设计参考来源，未直接复制其源代码到本仓库；本项目按白皮书第 4 节和
+第 16 节的要求，仅吸收六个内核机制并独立实现。
+
+Hermes MIT License 全文见：
+
+    docs/licenses/hermes-mit-license.txt
+
+==========================================================================
+第三方参考项目（摘要）
+==========================================================================
+
+1. Hermes Agent — MIT License
+   来源：https://github.com/NousResearch/hermes-agent
+   参考 commit：7b5ba2054721dde998ed47fd4a0f031955278e99
+   吸收方式：仅吸收设计思想，独立实现
+
+2. Mem0 — Apache-2.0
+   来源：https://github.com/mem0ai/mem0
+
+3. Graphiti — MIT License
+   来源：https://github.com/getzep/graphiti
+
+4. Hindsight — Apache-2.0
+   来源：https://github.com/vectorize-io/hindsight
+
+5. OpenViking — AGPL-3.0
+   来源：https://github.com/volcengine/OpenViking
+
+6. Khoj — AGPL-3.0
+   来源：https://github.com/khoj-ai/khoj
+
+7. Letta — Apache-2.0
+   来源：https://github.com/letta-ai/letta
+
+8. Generative Agents — 学术论文（arXiv:2304.03442）
+   来源：https://arxiv.org/abs/2304.03442
+
+上述参考项目仅提供设计证据，不自动成为本项目依赖；本项目默认只吸收
+思想并独立实现，不复制受 AGPL 约束的代码。

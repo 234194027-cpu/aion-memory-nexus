@@ -1,0 +1,5 @@
+# Optional Zvec vector index.
+# Install only when VECTOR_INDEX_BACKEND=zvec is enabled.
+# Requires verification of platform compatibility before production deployment.
+
+zvec>=0.5.1

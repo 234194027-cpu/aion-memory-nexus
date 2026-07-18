@@ -1,0 +1,45 @@
+{
+  "generated_at": "2026-07-12T13:21:31.212469+00:00",
+  "user_id_opaque": "37a8eec1ce19",
+  "metrics": {
+    "total_candidates": 0,
+    "accept_rate": 0.0,
+    "accepted_count": 0,
+    "conflict_rate": 0.0,
+    "conflict_count": 0,
+    "duplicate_rate": 0.0,
+    "duplicate_hash_groups": 0,
+    "duplicate_extra_count": 0,
+    "committed_with_hash_total": 0,
+    "memory_type_distribution": {
+      "decision": 0,
+      "preference": 0,
+      "fact": 0,
+      "insight": 0,
+      "task": 0,
+      "project_context": 0,
+      "principle": 0,
+      "correction": 0,
+      "timeline_event": 0,
+      "persona_hypothesis": 0,
+      "unknown": 0
+    },
+    "memory_type_rate": {},
+    "status_distribution": {}
+  },
+  "supporting": {
+    "work_case_count": 0,
+    "candidate_hashes_sample": []
+  },
+  "derivation_notes": [
+    "accept_rate = (accepted + edited_and_accepted) / total_candidates",
+    "conflict_rate = candidates with non-empty conflict_memory_ids / total_candidates",
+    "duplicate_rate = duplicate_extra_count / committed_with_hash_total",
+    "duplicate_extra_count = sum(group_size - 1) for each duplicate content_hash group",
+    "memory_type_rate only lists types with non-zero counts"
+  ],
+  "privacy_notes": [
+    "All values are aggregated counts only; no raw title/body text is included.",
+    "candidate_hashes are 12-character SHA-256 prefixes (opaque IDs) capped at 50 samples."
+  ]
+}

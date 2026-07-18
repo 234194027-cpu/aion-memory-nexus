@@ -1,0 +1,75 @@
+/* WP-0A-T07 (D22): design tokens 作为 CSS 自定义属性暴露。
+ * 通过 var(--lm-*) 在任意组件中复用，避免硬编码颜色/间距/圆角/阴影。
+ * 与 Element Plus 主题变量并存，不覆盖 EP 默认值。
+ */
+:root {
+  /* Spacing scale */
+  --lm-spacing-xs: 4px;
+  --lm-spacing-sm: 8px;
+  --lm-spacing-md: 16px;
+  --lm-spacing-lg: 24px;
+  --lm-spacing-xl: 32px;
+
+  /* Brand colors */
+  --lm-color-primary: #667eea;
+  --lm-color-primary-dark: #5563d6;
+  --lm-color-primary-light: #8395f3;
+  --lm-color-success: #67c23a;
+  --lm-color-warning: #e6a23c;
+  --lm-color-danger: #f56c6c;
+  --lm-color-info: #909399;
+
+  /* Surface/text tokens */
+  --lm-color-bg: #ffffff;
+  --lm-color-bg-muted: #f5f7fa;
+  --lm-color-border: #e4e7ed;
+  --lm-color-text: #303133;
+  --lm-color-text-secondary: #606266;
+  --lm-color-text-placeholder: #a8abb2;
+
+  /* Shadows */
+  --lm-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --lm-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --lm-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+  /* Radius */
+  --lm-radius-sm: 4px;
+  --lm-radius-md: 8px;
+  --lm-radius-lg: 12px;
+  --lm-radius-pill: 9999px;
+
+  /* Transition */
+  --lm-transition: 0.3s ease;
+  --lm-transition-fast: 0.2s ease;
+
+  /* Z-index scale */
+  --lm-z-drawer: 2000;
+  --lm-z-modal: 3000;
+  --lm-z-popover: 4000;
+
+  /* Font sizes */
+  --lm-font-size-xs: 12px;
+  --lm-font-size-sm: 13px;
+  --lm-font-size-base: 14px;
+  --lm-font-size-lg: 16px;
+  --lm-font-size-xl: 18px;
+  --lm-font-size-2xl: 22px;
+}
+
+/* prefers-reduced-motion: 全局禁用过渡动画时长（不强制为 0，避免 EP 内部依赖） */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --lm-transition: 0s;
+    --lm-transition-fast: 0s;
+  }
+}
+
+/* Dark mode token overrides（与 Element Plus dark mode 配合使用） */
+html.dark {
+  --lm-color-bg: #1d1e1f;
+  --lm-color-bg-muted: #252627;
+  --lm-color-border: #3a3b3c;
+  --lm-color-text: #e5e5e5;
+  --lm-color-text-secondary: #b0b0b0;
+  --lm-color-text-placeholder: #7a7a7a;
+}

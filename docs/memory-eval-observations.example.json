@@ -1,0 +1,18 @@
+[
+  {
+    "observation_id": "example-retrieval-001",
+    "expected_memory_ids": ["memory-example-a"],
+    "retrieved_memory_ids": ["memory-example-a", "memory-example-b"],
+    "expected_source_ids": ["source-example-a"],
+    "cited_source_ids": ["source-example-a"],
+    "should_abstain": false,
+    "did_abstain": false,
+    "expected_temporal_label": "current",
+    "actual_temporal_label": "current"
+  },
+  {
+    "observation_id": "example-abstention-002",
+    "should_abstain": true,
+    "did_abstain": true
+  }
+]

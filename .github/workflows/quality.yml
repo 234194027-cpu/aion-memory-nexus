@@ -1,0 +1,62 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, "codex/**"]
+  workflow_dispatch:
+    inputs:
+      run_external_acceptance:
+        description: "Run checks that require a provisioned staging environment"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  code-quality:
+    name: code-quality
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+          cache: npm
+          cache-dependency-path: admin-web/package-lock.json
+      - name: Install Python quality dependencies
+        run: python -X utf8 -m pip install -r requirements-dev.txt
+      - name: Python lint
+        run: python -X utf8 -m ruff check src tests
+      - name: Python targeted type check
+        run: python -X utf8 -m mypy
+      - name: Python tests
+        run: python -X utf8 -m pytest tests -q
+      - name: Migration round trip
+        run: python -X utf8 scripts/check_migrations.py
+      - name: Install frontend dependencies
+        working-directory: admin-web
+        run: npm ci
+      - name: Frontend lint
+        working-directory: admin-web
+        run: npm run lint
+      - name: Frontend type check
+        working-directory: admin-web
+        run: npm run typecheck
+      - name: Frontend production build
+        working-directory: admin-web
+        run: npm run build
+
+  external-acceptance:
+    name: external-acceptance
+    needs: code-quality
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_external_acceptance }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Explain external acceptance boundary
+        run: |
+          echo "External acceptance is intentionally separate from code quality."
+          echo "Run the documented staging checks with real WeCom and model credentials; never inject production secrets into pull-request CI."

@@ -1,0 +1,35 @@
+Hermes Agent — MIT License 全文
+=================================
+
+来源：https://github.com/NousResearch/hermes-agent
+参考 commit：7b5ba2054721dde998ed47fd4a0f031955278e99
+
+Copyright (c) Nous Research, LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------
+
+本项目（人生记忆系统）按白皮书 16.2 节许可证要求保存 Hermes Agent MIT
+License 全文。本仓库未直接复制 Hermes Agent 的源代码；本项目仅吸收其
+设计思想并独立实现，Hermes Agent 不构成本项目的运行依赖、SDK 或独立服务。
+
+如后续实现阶段需要复制或改写具有实质性的 Hermes 代码，将在
+docs/licenses/third-party-attributions.md 中追加文件、commit、用途和
+修改记录，并保留 Nous Research 的版权声明。

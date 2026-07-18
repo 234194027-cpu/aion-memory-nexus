@@ -1,0 +1,32 @@
+fastapi==0.139.0
+uvicorn==0.31.0
+gunicorn==22.0.0
+sqlalchemy==2.0.39
+aiosqlite==0.20.0
+psycopg[binary]>=3.2.3
+pydantic[email]>=2.12.0
+pydantic-settings>=2.5.2
+python-jose[cryptography]==3.5.0
+passlib==1.7.4
+celery==5.4.0
+redis==5.0.8
+pyyaml==6.0.2
+httpx==0.28.1
+websockets==13.1
+apscheduler==3.10.4
+alembic>=1.14.0
+cryptography>=42.0.0
+slowapi>=0.1.9
+pgvector>=0.2.5
+trafilatura>=1.12.0
+pillow>=10.4.0
+openpyxl>=3.1.5
+pypdf>=5.0.0
+python-multipart>=0.0.20
+# Internal Neo4j projection only; Graphiti is never exposed as MCP/REST.
+graphiti-core==0.29.2
+
+# Test dependencies
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+httpx2==2.5.0

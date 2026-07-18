@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-07-12T00:00:00+00:00",
+  "user_id_opaque": "a1b2c3d4e5f6",
+  "metrics": {
+    "total_sessions": 0,
+    "mode_distribution": {
+      "recall": 0,
+      "decision": 0,
+      "review": 0,
+      "planning": 0,
+      "reflection": 0,
+      "unknown": 0
+    },
+    "confidence_distribution": {
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "unknown": 0
+    },
+    "cited_empty_rate": 0.0,
+    "cited_empty_count": 0,
+    "followup_rate": 0.0,
+    "clarification_rate": 0.0,
+    "no_evidence_abstain_rate": 0.0
+  },
+  "supporting": {
+    "session_count": 0,
+    "session_hashes_sample": []
+  },
+  "derivation_notes": [
+    "followup_rate: derived from advisor_mode==recall count / total_sessions",
+    "clarification_rate: derived from advisor_mode==review count / total_sessions",
+    "no_evidence_abstain_rate: derived from (cited_empty - planning_count) / total_sessions",
+    "cited_empty_rate: fraction of sessions with cited_memory_ids being None or empty list",
+    "confidence bands: high >=0.7, medium [0.4, 0.7), low [0.0, 0.4)"
+  ],
+  "privacy_notes": [
+    "All values are aggregated counts only; no raw question/answer text is included.",
+    "session_hashes are 12-character SHA-256 prefixes (opaque IDs) capped at 50 samples."
+  ]
+}

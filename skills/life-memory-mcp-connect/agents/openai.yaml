@@ -1,0 +1,4 @@
+interface:
+  display_name: "Life Memory MCP Connect"
+  short_description: "Connect agents to a shared Life Memory layer through MCP and MAP"
+  default_prompt: "使用 $life-memory-mcp-connect 全自动接入人生记忆系统 MCP，让 agent 学会任务前读记忆、任务后写总结、每日增量同步，并运行真实 smoke test。"

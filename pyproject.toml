@@ -1,0 +1,44 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# The existing repository has not been style-baselined. Start with correctness
+# rules that can pass today, then expand the rule set package by package.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = false  # 渐进式启用
+warn_unused_ignores = true
+follow_imports = "skip"
+files = [
+  "src/shared/version.py",
+  "src/shared/errors/error_classification.py",
+  "src/shared/utils/retry.py",
+  "src/memory/services/memory_answer_service.py",
+  "src/platform/api/admin/system.py",
+  "src/execution/models/agent_runtime.py",
+  "src/execution/runtime",
+  "src/execution/api/runtime.py",
+  "src/execution/schemas/runtime.py",
+]
+
+# ---------------------------------------------------------------------------
+# import-linter (WP-0A-T04): 依赖方向契约
+# ---------------------------------------------------------------------------
+# import-linter 的 forbidden 契约检查传递依赖（无法关闭），而代码库中
+# 存在预先存在的架构问题（events.py -> memory_extraction.py -> providers，
+# committed_memory.py -> vector_store.py -> retrieval_engine.py -> providers，
+# memory_answer_service.py -> providers 等），这些是 T04 范围外的 pre-existing
+# 违规，无法在 T04 内修复。
+#
+# 因此 T04 的 "API 不直接导入 src.shared.llm.providers" 契约改用 Makefile
+# 中的 `check-import-boundaries` 目标（grep 检查直接 import 语句）来强制。
+# import-linter root_package 保留以备后续工作包建立 layers 契约。
+[tool.importlinter]
+root_package = "src"

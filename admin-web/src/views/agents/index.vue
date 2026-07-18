@@ -1,0 +1,438 @@
+<template>
+  <div class="page-container">
+    <div class="page-header">
+      <div>
+        <h2>Agent 记忆接入</h2>
+        <p>管理外部 Agent 接入、MCP 配置、同步状态和服务端提交策略。</p>
+      </div>
+      <el-button type="primary" @click="createVisible = true">
+        <el-icon><Plus /></el-icon>
+        新建 Agent
+      </el-button>
+    </div>
+
+    <el-card class="runtime-card" v-loading="runtimeLoading">
+      <template #header>
+        <div class="section-title">
+        <h3>双 Agent V2.4</h3>
+          <el-tag type="success">自主记忆治理</el-tag>
+        </div>
+      </template>
+      <dl class="runtime-grid">
+        <div><dt>活跃案件</dt><dd>{{ workingStatus?.active_backlog ?? '-' }}</dd></div>
+        <div><dt>等待补证</dt><dd>{{ workingStatus?.waiting_for_evidence ?? '-' }}</dd></div>
+        <div><dt>治理决策</dt><dd>{{ workingStatus?.decision_count ?? '-' }}</dd></div>
+        <div><dt>自动记忆</dt><dd>{{ workingStatus?.automatic_memory_count ?? '-' }}</dd></div>
+        <div><dt>失败事件</dt><dd>{{ workingStatus?.failed_event_count ?? '-' }}</dd></div>
+        <div><dt>待重试</dt><dd>{{ workingStatus?.retryable_failed_event_count ?? '-' }}</dd></div>
+        <div><dt>平均处理</dt><dd>{{ formatDuration(workingStatus?.average_processing_ms) }}</dd></div>
+        <div><dt>正式写入</dt><dd>工作 Agent 自动治理</dd></div>
+        <div><dt>正式记忆摘要</dt><dd>{{ workingStatus?.conversation_memory_projection?.item_count ?? '-' }} 条</dd></div>
+        <div><dt>摘要刷新</dt><dd>{{ formatTime(workingStatus?.conversation_memory_projection?.projected_at) }}</dd></div>
+        <div><dt>文档来源检索</dt><dd>{{ workingStatus?.shared_cognition?.document_source_search ? '已启用' : '未启用' }}</dd></div>
+        <div><dt>未确认线索</dt><dd>{{ workingStatus?.shared_cognition?.unconfirmed_clue_search ? '仅限澄清' : '未启用' }}</dd></div>
+      </dl>
+    </el-card>
+
+    <el-card class="table-card">
+      <el-table :data="agentList" v-loading="loading" row-key="id">
+        <el-table-column prop="agent_name" label="Agent 名称" min-width="180" />
+        <el-table-column prop="agent_type" label="类型" width="130">
+          <template #default="{ row }">
+            {{ agentTypeLabel(row.agent_type) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="default_recall_level" label="召回级别" width="160">
+          <template #default="{ row }">
+            {{ recallLevelLabel(row.default_recall_level) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.status ? 'success' : 'info'">
+              {{ row.status ? '启用' : '停用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="最后活跃" width="190">
+          <template #default="{ row }">
+            {{ formatTime(row.last_seen_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="策略" min-width="220">
+          <template #default="{ row }">
+            <el-tag
+              v-for="policy in enabledPolicies(row)"
+              :key="policy.description || policy.type"
+              class="policy-tag"
+              type="warning"
+            >
+              {{ policyLabel(policy) }}
+            </el-tag>
+            <span v-if="!enabledPolicies(row).length" class="muted">服务端治理</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="300" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="openBridge(row)">接入配置</el-button>
+            <el-button type="primary" link @click="handleRegenerateToken(row)">重置 Token</el-button>
+            <el-button type="danger" link @click="handleDelete(row)" :disabled="row.is_default">停用</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-dialog v-model="createVisible" title="新建 Agent" width="520px">
+      <el-form :model="createForm" label-width="130px">
+        <el-form-item label="名称" required>
+          <el-input v-model="createForm.agent_name" placeholder="例如：Codex 记忆助手" />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="createForm.agent_type">
+            <el-option label="Codex" value="codex" />
+            <el-option label="Claude Code" value="claude_code" />
+            <el-option label="OpenClaw" value="openclaw" />
+            <el-option label="自定义" value="custom" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="召回级别">
+          <el-select v-model="createForm.default_recall_level">
+            <el-option label="仅任务上下文" value="task_only" />
+            <el-option label="工作上下文" value="work_context" />
+            <el-option label="个人上下文" value="personal_context" />
+            <el-option label="完整可信上下文" value="full_trusted" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-input v-model="createForm.role" />
+        </el-form-item>
+        <el-form-item label="使命">
+          <el-input v-model="createForm.mission" type="textarea" :rows="3" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="handleCreate">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="tokenVisible" title="Token 仅显示一次" width="680px">
+      <el-alert type="warning" :closable="false" show-icon>
+        此 Token 只会显示一次。请保存到 MCP 客户端环境变量中，不要提交到代码仓库。
+      </el-alert>
+      <pre class="code-block">{{ oneTimeToken }}</pre>
+      <template #footer>
+        <el-button @click="copy(oneTimeToken)">复制 Token</el-button>
+        <el-button type="primary" @click="tokenVisible = false">完成</el-button>
+      </template>
+    </el-dialog>
+
+    <el-drawer v-model="bridgeVisible" size="720px" title="MCP 接入配置">
+      <div v-if="bridge" class="bridge-content">
+        <section class="section-panel">
+          <h3>Agent</h3>
+          <dl class="meta-grid">
+            <div><dt>ID</dt><dd>{{ bridge.agent.id }}</dd></div>
+            <div><dt>类型</dt><dd>{{ agentTypeLabel(bridge.agent.agent_type) }}</dd></div>
+            <div><dt>召回级别</dt><dd>{{ recallLevelLabel(bridge.agent.default_recall_level) }}</dd></div>
+            <div><dt>最后活跃</dt><dd>{{ formatTime(bridge.agent.last_seen_at) }}</dd></div>
+          </dl>
+        </section>
+
+        <section class="section-panel">
+          <div class="section-title">
+            <h3>MCP 配置</h3>
+            <el-button link type="primary" @click="copy(bridge.mcp_config)">复制</el-button>
+          </div>
+          <pre class="code-block">{{ bridge.mcp_config }}</pre>
+        </section>
+
+        <section class="section-panel">
+          <div class="section-title">
+            <h3>外部 Agent 系统提示词</h3>
+            <el-button link type="primary" @click="copy(bridge.external_agent_prompt)">复制</el-button>
+          </div>
+          <pre class="code-block">{{ bridge.external_agent_prompt }}</pre>
+        </section>
+
+        <section class="section-panel">
+          <div class="section-title">
+            <h3>一次性 MCP 测试提示词</h3>
+            <el-button link type="primary" @click="copy(bridge.mcp_test_prompt)">复制</el-button>
+          </div>
+          <pre class="code-block">{{ bridge.mcp_test_prompt }}</pre>
+        </section>
+
+        <section class="section-panel">
+          <h3>同步状态</h3>
+          <dl class="meta-grid">
+            <div><dt>原始事件</dt><dd>{{ bridge.sync_status.raw_event_count }}</dd></div>
+            <div><dt>工作案件</dt><dd>{{ bridge.sync_status.work_case_count }}</dd></div>
+            <div><dt>已提交记忆</dt><dd>{{ bridge.sync_status.committed_count }}</dd></div>
+            <div><dt>跳过重复</dt><dd>{{ bridge.sync_status.duplicate_skipped_count }}</dd></div>
+            <div><dt>上次同步</dt><dd>{{ formatTime(bridge.sync_status.last_sync_at) }}</dd></div>
+          </dl>
+          <el-alert
+            v-if="bridge.sync_status.recent_errors?.length"
+            type="error"
+            :closable="false"
+            show-icon
+            title="检测到最近同步错误"
+          />
+        </section>
+
+        <section class="section-panel">
+          <h3>策略</h3>
+          <el-tag type="info">严格审核，禁止自动提交</el-tag>
+          <pre class="code-block">{{ JSON.stringify(bridge.policy_status.allowed_write_scopes, null, 2) }}</pre>
+        </section>
+      </div>
+    </el-drawer>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
+import { agentsApi } from '../../api'
+import { agentTypeLabel, recallLevelLabel } from '../../utils/labels'
+
+const loading = ref(false)
+const saving = ref(false)
+const agentList = ref<any[]>([])
+const createVisible = ref(false)
+const tokenVisible = ref(false)
+const bridgeVisible = ref(false)
+const oneTimeToken = ref('')
+const bridge = ref<any>(null)
+const workingStatus = ref<any>(null)
+const runtimeLoading = ref(false)
+
+const createForm = reactive({
+  agent_name: '',
+  agent_type: 'custom',
+  default_recall_level: 'work_context',
+  role: '',
+  mission: ''
+})
+
+const normalizeList = (res: any) => {
+  if (Array.isArray(res)) return res
+  return res?.items || res?.agents || []
+}
+
+const fetchData = async () => {
+  loading.value = true
+  runtimeLoading.value = true
+  try {
+    const [res, status] = await Promise.all([
+      agentsApi.list(),
+      agentsApi.workingStatus()
+    ])
+    agentList.value = normalizeList(res)
+    workingStatus.value = status
+  } finally {
+    loading.value = false
+    runtimeLoading.value = false
+  }
+}
+
+const handleCreate = async () => {
+  if (!createForm.agent_name.trim()) {
+    ElMessage.warning('请输入 Agent 名称')
+    return
+  }
+  saving.value = true
+  try {
+    const res = await agentsApi.create({ ...createForm })
+    oneTimeToken.value = res.api_token || ''
+    tokenVisible.value = Boolean(oneTimeToken.value)
+    createVisible.value = false
+    createForm.agent_name = ''
+    createForm.role = ''
+    createForm.mission = ''
+    await fetchData()
+  } finally {
+    saving.value = false
+  }
+}
+
+const openBridge = async (row: any) => {
+  bridge.value = await agentsApi.bridgeStatus(row.id)
+  bridgeVisible.value = true
+}
+
+const handleRegenerateToken = async (row: any) => {
+  await ElMessageBox.confirm(`确定要重置「${row.agent_name}」的 Token 吗？已有 MCP 客户端会停止工作。`, '重置 Token', {
+    confirmButtonText: '确定重置',
+    cancelButtonText: '取消',
+    type: 'warning'
+  })
+  const res = await agentsApi.regenerateToken(row.id)
+  oneTimeToken.value = res.api_token || ''
+  tokenVisible.value = Boolean(oneTimeToken.value)
+}
+
+const handleDelete = async (row: any) => {
+  await ElMessageBox.confirm(`确定要停用 Agent「${row.agent_name}」吗？`, '停用 Agent', {
+    confirmButtonText: '确定停用',
+    cancelButtonText: '取消',
+    type: 'warning'
+  })
+  await agentsApi.delete(row.id)
+  await fetchData()
+}
+
+const enabledPolicies = (row: any) => {
+  return (row.allowed_write_scopes || []).filter((policy: any) => policy.enabled)
+}
+
+const policyLabel = (policy: any) => {
+  return policy?.description || policy?.type || '未知策略'
+}
+
+const formatTime = (value?: string) => {
+  if (!value) return '-'
+  return new Date(value).toLocaleString()
+}
+
+const formatDuration = (value?: number | null) => {
+  if (value === null || value === undefined) return '-'
+  if (value < 1000) return `${Math.round(value)} ms`
+  return `${(value / 1000).toFixed(2)} 秒`
+}
+
+const copy = async (text: string) => {
+  await navigator.clipboard.writeText(text || '')
+  ElMessage.success('已复制')
+}
+
+onMounted(fetchData)
+</script>
+
+<style scoped>
+.page-container {
+  padding: 20px;
+  max-width: 1600px;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.page-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  color: #172033;
+}
+
+.page-header p {
+  margin: 6px 0 0;
+  color: #667085;
+}
+
+.table-card {
+  border-radius: 8px;
+}
+
+.runtime-card {
+  margin-bottom: 20px;
+  border-radius: 8px;
+}
+
+.runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.runtime-grid > div {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.runtime-grid dt {
+  color: #667085;
+  font-size: 12px;
+}
+
+.runtime-grid dd {
+  margin: 6px 0 0;
+  color: #172033;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.policy-tag {
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.muted {
+  color: #98a2b3;
+}
+
+.bridge-content {
+  display: grid;
+  gap: 16px;
+}
+
+.section-panel {
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.section-panel h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  color: #172033;
+}
+
+.section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.meta-grid dt {
+  color: #667085;
+  font-size: 12px;
+}
+
+.meta-grid dd {
+  margin: 4px 0 0;
+  color: #172033;
+  word-break: break-all;
+}
+
+.code-block {
+  margin: 10px 0 0;
+  padding: 12px;
+  border-radius: 6px;
+  background: #101828;
+  color: #f9fafb;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+</style>

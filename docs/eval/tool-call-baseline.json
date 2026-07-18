@@ -1,0 +1,452 @@
+{
+  "generated_at": "2026-07-12T13:29:36.167621+00:00",
+  "user_id_opaque": "d4393ab54a3c",
+  "samples_requested": 30,
+  "total_calls": 60,
+  "metrics": {
+    "success_count": 30,
+    "failure_count": 30,
+    "failure_rate": 0.5,
+    "read_memory_latency_ms": {
+      "avg": 340.59,
+      "p50": 195.75,
+      "p95": 222.28,
+      "min": 184.24,
+      "max": 4520.46
+    },
+    "manage_task_list_latency_ms": {
+      "avg": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    }
+  },
+  "calls": [
+    {
+      "sample_index": 1,
+      "tool_name": "read_memory",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 4520.46,
+      "error": null
+    },
+    {
+      "sample_index": 1,
+      "tool_name": "manage_task_list",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 0.56,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 2,
+      "tool_name": "read_memory",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 195.75,
+      "error": null
+    },
+    {
+      "sample_index": 2,
+      "tool_name": "manage_task_list",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 3,
+      "tool_name": "read_memory",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 186.09,
+      "error": null
+    },
+    {
+      "sample_index": 3,
+      "tool_name": "manage_task_list",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 4,
+      "tool_name": "read_memory",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 189.93,
+      "error": null
+    },
+    {
+      "sample_index": 4,
+      "tool_name": "manage_task_list",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 0.22,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 5,
+      "tool_name": "read_memory",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 185.92,
+      "error": null
+    },
+    {
+      "sample_index": 5,
+      "tool_name": "manage_task_list",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 6,
+      "tool_name": "read_memory",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 190.48,
+      "error": null
+    },
+    {
+      "sample_index": 6,
+      "tool_name": "manage_task_list",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 0.22,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 7,
+      "tool_name": "read_memory",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 193.1,
+      "error": null
+    },
+    {
+      "sample_index": 7,
+      "tool_name": "manage_task_list",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 0.21,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 8,
+      "tool_name": "read_memory",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 184.24,
+      "error": null
+    },
+    {
+      "sample_index": 8,
+      "tool_name": "manage_task_list",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 0.21,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 9,
+      "tool_name": "read_memory",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 202.83,
+      "error": null
+    },
+    {
+      "sample_index": 9,
+      "tool_name": "manage_task_list",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 0.25,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 10,
+      "tool_name": "read_memory",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 202.89,
+      "error": null
+    },
+    {
+      "sample_index": 10,
+      "tool_name": "manage_task_list",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 11,
+      "tool_name": "read_memory",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 201.92,
+      "error": null
+    },
+    {
+      "sample_index": 11,
+      "tool_name": "manage_task_list",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 12,
+      "tool_name": "read_memory",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 192.15,
+      "error": null
+    },
+    {
+      "sample_index": 12,
+      "tool_name": "manage_task_list",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 13,
+      "tool_name": "read_memory",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 213.17,
+      "error": null
+    },
+    {
+      "sample_index": 13,
+      "tool_name": "manage_task_list",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 14,
+      "tool_name": "read_memory",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 205.49,
+      "error": null
+    },
+    {
+      "sample_index": 14,
+      "tool_name": "manage_task_list",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 15,
+      "tool_name": "read_memory",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 202.77,
+      "error": null
+    },
+    {
+      "sample_index": 15,
+      "tool_name": "manage_task_list",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 0.21,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 16,
+      "tool_name": "read_memory",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 198.5,
+      "error": null
+    },
+    {
+      "sample_index": 16,
+      "tool_name": "manage_task_list",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 0.34,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 17,
+      "tool_name": "read_memory",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 197.65,
+      "error": null
+    },
+    {
+      "sample_index": 17,
+      "tool_name": "manage_task_list",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 18,
+      "tool_name": "read_memory",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 185.62,
+      "error": null
+    },
+    {
+      "sample_index": 18,
+      "tool_name": "manage_task_list",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 0.21,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 19,
+      "tool_name": "read_memory",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 184.95,
+      "error": null
+    },
+    {
+      "sample_index": 19,
+      "tool_name": "manage_task_list",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 0.24,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 20,
+      "tool_name": "read_memory",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 222.28,
+      "error": null
+    },
+    {
+      "sample_index": 20,
+      "tool_name": "manage_task_list",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 21,
+      "tool_name": "read_memory",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 191.45,
+      "error": null
+    },
+    {
+      "sample_index": 21,
+      "tool_name": "manage_task_list",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 22,
+      "tool_name": "read_memory",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 194.16,
+      "error": null
+    },
+    {
+      "sample_index": 22,
+      "tool_name": "manage_task_list",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 23,
+      "tool_name": "read_memory",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 198.94,
+      "error": null
+    },
+    {
+      "sample_index": 23,
+      "tool_name": "manage_task_list",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 0.23,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 24,
+      "tool_name": "read_memory",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 197.21,
+      "error": null
+    },
+    {
+      "sample_index": 24,
+      "tool_name": "manage_task_list",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 25,
+      "tool_name": "read_memory",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 212.26,
+      "error": null
+    },
+    {
+      "sample_index": 25,
+      "tool_name": "manage_task_list",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 26,
+      "tool_name": "read_memory",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 193.53,
+      "error": null
+    },
+    {
+      "sample_index": 26,
+      "tool_name": "manage_task_list",
+      "query_opaque": "bdf86f7fea75",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 27,
+      "tool_name": "read_memory",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 187.87,
+      "error": null
+    },
+    {
+      "sample_index": 27,
+      "tool_name": "manage_task_list",
+      "query_opaque": "eefcda5ab609",
+      "latency_ms": 0.2,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 28,
+      "tool_name": "read_memory",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 195.33,
+      "error": null
+    },
+    {
+      "sample_index": 28,
+      "tool_name": "manage_task_list",
+      "query_opaque": "3f209f0069a9",
+      "latency_ms": 0.21,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 29,
+      "tool_name": "read_memory",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 199.08,
+      "error": null
+    },
+    {
+      "sample_index": 29,
+      "tool_name": "manage_task_list",
+      "query_opaque": "b7a80326564d",
+      "latency_ms": 0.21,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "sample_index": 30,
+      "tool_name": "read_memory",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 191.71,
+      "error": null
+    },
+    {
+      "sample_index": 30,
+      "tool_name": "manage_task_list",
+      "query_opaque": "fd315d435758",
+      "latency_ms": 0.19,
+      "error": "InterfaceError: (psycopg.InterfaceError) Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by running 'asyncio.run(..., loop_factory=asyncio.SelectorEventLoop(selectors.SelectSelector()))'\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    }
+  ],
+  "privacy_notes": [
+    "All query content is hashed; no raw user query text is included in the output.",
+    "Only read-only tool calls (read_memory, manage_task list) are measured.",
+    "No tasks are created or modified during baseline collection."
+  ]
+}

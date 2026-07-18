@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-07-12T00:00:00+00:00",
+  "provider_type": "deepseek",
+  "model_name": "deepseek-chat",
+  "api_url_opaque": "a1b2c3d4e5f6",
+  "samples_requested": 30,
+  "samples_executed": 0,
+  "metrics": {
+    "success_count": 0,
+    "failure_count": 0,
+    "total_prompt_tokens": 0,
+    "total_completion_tokens": 0,
+    "total_cost_rmb": 0.0,
+    "avg_latency_ms": 0.0,
+    "p50_latency_ms": 0.0,
+    "p95_latency_ms": 0.0
+  },
+  "calls": [],
+  "price_table_rmb_per_1k_tokens": {
+    "deepseek-chat": {"input": 0.001, "output": 0.002},
+    "deepseek-coder": {"input": 0.001, "output": 0.002},
+    "default": {"input": 0.001, "output": 0.002}
+  },
+  "privacy_notes": [
+    "All prompt content is hashed; no raw user_message text is included in the output.",
+    "api_url_opaque is a 12-character SHA-256 prefix; the actual API endpoint is not logged.",
+    "API keys are never included in the output."
+  ]
+}

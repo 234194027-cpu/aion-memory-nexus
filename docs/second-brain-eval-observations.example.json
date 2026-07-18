@@ -1,0 +1,20 @@
+[
+  {
+    "observation_id": "example-v2-001",
+    "temporal_correct": true,
+    "correction_correct": true,
+    "relationship_correct": true,
+    "open_loop_correct": true,
+    "citation_correct": true,
+    "reflection_support_complete": true,
+    "reminder_sent": true,
+    "reminder_useful": true,
+    "reminder_closed": false,
+    "reminder_repeated_within_7d": false
+  },
+  {
+    "observation_id": "example-v2-002",
+    "temporal_correct": false,
+    "reminder_sent": false
+  }
+]

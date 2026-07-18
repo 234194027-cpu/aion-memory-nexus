@@ -1,0 +1,54 @@
+{
+  "artifacts": [
+    {
+      "files": [
+        "life-memory-mcp-connect/SKILL.md",
+        "life-memory-mcp-connect/agents/openai.yaml",
+        "life-memory-mcp-connect/references/agent-bootstrap-prompt.md",
+        "life-memory-mcp-connect/references/auto-submit-policy.md",
+        "life-memory-mcp-connect/references/automation-templates.md",
+        "life-memory-mcp-connect/references/mcp-config-examples.md",
+        "life-memory-mcp-connect/references/memory-access-map.md",
+        "life-memory-mcp-connect/references/windows-codex-troubleshooting.md",
+        "life-memory-mcp-connect/scripts/bootstrap_life_memory_agent.py",
+        "life-memory-mcp-connect/scripts/configure_mcp.py",
+        "life-memory-mcp-connect/scripts/doctor.py",
+        "life-memory-mcp-connect/scripts/install_life_memory_skill.py",
+        "life-memory-mcp-connect/scripts/life_memory_mcp_server.py",
+        "life-memory-mcp-connect/scripts/mcp_contract.json",
+        "life-memory-mcp-connect/scripts/smoke_test_mcp.py",
+        "life-memory-mcp-connect/scripts/validate_memory_batch.py",
+        "life-memory-mcp-connect/scripts/write_codex_mcp_config.py"
+      ],
+      "name": "life-memory-mcp-connect-skill",
+      "path": "releases/3.0.0/life-memory-mcp-connect-skill.zip",
+      "sha256": "44ba4428fee8baa5709da751534720b101ec6287126d905698923b916c6717ce",
+      "size": 38271
+    },
+    {
+      "files": [
+        "life-memory-media-ingestion/SKILL.md",
+        "life-memory-media-ingestion/examples/create-link.md",
+        "life-memory-media-ingestion/examples/upload-image.md",
+        "life-memory-media-ingestion/examples/upload-table.md",
+        "life-memory-media-ingestion/templates/mcp-tool-contract.md"
+      ],
+      "name": "life-memory-media-ingestion-skill",
+      "path": "releases/3.0.0/life-memory-media-ingestion-skill.zip",
+      "sha256": "bda049f978b0b564d0cb3cb2fcd620e0f7b6d29ac1468e180a0b517fd090c3a3",
+      "size": 4090
+    },
+    {
+      "files": [
+        "install_life_memory_skill.py"
+      ],
+      "name": "install_life_memory_skill",
+      "path": "releases/3.0.0/install_life_memory_skill.py",
+      "sha256": "ba284d19b3cc08c44a304de82a2124d04275d6b8065b0b7daf598d8a73deb81d",
+      "size": 8522
+    }
+  ],
+  "build_commit": "local-uncommitted",
+  "schema_version": 1,
+  "skill_version": "3.0.0"
+}

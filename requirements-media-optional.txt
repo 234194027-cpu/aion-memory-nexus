@@ -1,0 +1,17 @@
+# Optional heavy media extractors.
+# Install only when the matching MEDIA_ENABLE_* switch is enabled.
+
+# MEDIA_ENABLE_MARKITDOWN=true
+markitdown>=0.1.0
+
+# MEDIA_ENABLE_RAPIDOCR=true
+rapidocr>=3.0.0
+
+# MEDIA_ENABLE_WHISPER=true
+faster-whisper>=1.1.0
+
+# MEDIA_ENABLE_YTDLP=true
+yt-dlp>=2025.1.0
+
+# Experimental/high-cost document pipeline; keep disabled unless explicitly tested.
+# docling>=2.0.0
