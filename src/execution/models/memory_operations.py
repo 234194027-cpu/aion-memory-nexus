@@ -6,7 +6,7 @@ from the formal-memory truth layer.
 """
 from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 
 from src.shared.db.database import Base
 
@@ -47,6 +47,8 @@ class MemoryMaintenanceAction(Base):
     details = Column(JSON, nullable=False, default=dict)
     idempotency_key = Column(String(96), nullable=False, unique=True, index=True)
     reversible_until = Column(DateTime(timezone=True), nullable=True)
+    rolled_back_at = Column(DateTime(timezone=True), nullable=True)
+    rollback_action_id = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -78,3 +80,32 @@ class UserMemoryBrief(Base):
     generated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=True)
     token_estimate = Column(Integer, nullable=False, default=0)
+
+
+class MemoryMaintenanceControl(Base):
+    """Per-user write gate for autonomous high-risk maintenance.
+
+    Conversation ingestion and evidence capture never consult this gate.  It
+    only guards merge/supersede/expiry/compaction/purge operations so a quality
+    regression cannot take the conversational system offline.
+    """
+
+    __tablename__ = "memory_maintenance_controls"
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(String(64), nullable=False, unique=True, index=True)
+    state = Column(String(32), nullable=False, default="active", server_default="active")
+    pause_reason = Column(String(256), nullable=True)
+    last_error_code = Column(String(128), nullable=True)
+    integrity_fault = Column(Boolean, nullable=False, default=False, server_default="false")
+    shadow_passes = Column(Integer, nullable=False, default=0, server_default="0")
+    transition_metadata = Column(JSON, nullable=False, default=dict)
+    paused_at = Column(DateTime(timezone=True), nullable=True)
+    resumed_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_memory_maintenance_control_state", "state", "updated_at"),
+    )

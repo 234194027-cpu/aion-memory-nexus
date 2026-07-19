@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, Enum, Index, Integer, JSON, String, UniqueConstraint, func
+from sqlalchemy import Column, DateTime, Enum, Float, Index, Integer, JSON, String, UniqueConstraint, func
 
 from src.shared.db.database import Base
 
@@ -92,4 +92,27 @@ class GraphReplayCheckpoint(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "source_kind", name="uq_graph_replay_checkpoint_user_source"),
         Index("ix_graph_replay_checkpoint_user", "user_id", "source_kind"),
+    )
+
+
+class GraphShadowObservation(Base):
+    """Content-free retrieval comparison used before Graphiti can be activated."""
+
+    __tablename__ = "graph_shadow_observations"
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(String(64), nullable=False, index=True)
+    query_hash = Column(String(64), nullable=False, index=True)
+    baseline_memory_ids = Column(JSON, nullable=False, default=list)
+    graph_memory_ids = Column(JSON, nullable=False, default=list)
+    graph_relation_count = Column(Integer, nullable=False, default=0, server_default="0")
+    novel_verified_count = Column(Integer, nullable=False, default=0, server_default="0")
+    source_coverage = Column(Float, nullable=False, default=0.0, server_default="0")
+    graph_latency_ms = Column(Integer, nullable=False, default=0, server_default="0")
+    token_used = Column(Integer, nullable=False, default=0, server_default="0")
+    mode = Column(String(16), nullable=False, default="shadow", server_default="shadow")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_graph_shadow_user_created", "user_id", "created_at"),
     )

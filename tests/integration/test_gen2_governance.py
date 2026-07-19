@@ -1,4 +1,4 @@
-"""Gen 2 集成验收测试套件 — Conflict / Dedup / Rewriter。"""
+"""Gen 2 集成验收测试套件 — Conflict / bounded dedup / relations。"""
 
 from __future__ import annotations
 
@@ -367,139 +367,6 @@ def test_merge_preserves_primary_memory_sources():
     asyncio.run(run())
 
 
-def test_rewriter_is_read_only_retired_without_modifying():
-    async def run():
-        await init_db()
-        client = TestClient(app)
-        email, _token = register_user(client)
-        user_id = await get_user_id(email)
-
-        await seed_committed_memory(user_id, title="任务: 实现登录功能", body="用 FastAPI 写一个简单的 login endpoint。", memory_type=MemoryType.TASK, importance=0.5)
-        await seed_committed_memory(user_id, title="任务: 实现登录功能 (重复)", body="FastAPI 写一个 login endpoint, 这次使用 OAuth2。", memory_type=MemoryType.TASK, importance=0.5)
-
-        before = {}
-        async with async_session() as session:
-            memories = (await session.execute(select(CommittedMemory).where(CommittedMemory.user_id == user_id))).scalars().all()
-            for m in memories:
-                before[m.id] = (m.status, m.body)
-
-        from src.memory.services.memory_rewriter import MemoryRewriter
-
-        async with async_session() as session:
-            rewriter = MemoryRewriter(session)
-            result = await rewriter.rewrite(user_id=user_id, target_types=None, max_clusters=20)
-
-        assert result["applied"] is False
-        assert result["proposals"] == []
-        assert result["warnings"] == ["memory_rewriter_retired_use_working_agent"]
-        assert "generated_at" in result
-
-        after = {}
-        async with async_session() as session:
-            memories = (await session.execute(select(CommittedMemory).where(CommittedMemory.user_id == user_id))).scalars().all()
-            for m in memories:
-                after[m.id] = (m.status, m.body)
-
-        assert before == after
-        await cleanup_user_data(user_id)
-
-    asyncio.run(run())
-
-
-def test_rewriter_does_not_call_a_model_or_generate_legacy_proposals(monkeypatch):
-    async def run():
-        await init_db()
-        client = TestClient(app)
-        email, _token = register_user(client)
-        user_id = await get_user_id(email)
-
-        id_a = await seed_committed_memory(user_id, title="事实 A", body="A 的内容", memory_type=MemoryType.FACT)
-        id_b = await seed_committed_memory(user_id, title="事实 B", body="B 的内容", memory_type=MemoryType.FACT)
-        id_c = await seed_committed_memory(user_id, title="事实 C", body="C 的内容", memory_type=MemoryType.FACT)
-
-        from src.memory.services.memory_rewriter import MemoryRewriter
-
-        async with async_session() as session:
-            rewriter = MemoryRewriter(session)
-            result = await rewriter.rewrite(user_id=user_id, target_types=None, max_clusters=20)
-
-        assert result["proposals"] == []
-        assert result["warnings"] == ["memory_rewriter_retired_use_working_agent"]
-        await cleanup_user_data(user_id)
-
-    asyncio.run(run())
-
-
-def test_apply_rewrite_is_retired_and_does_not_mutate_memory():
-    async def run():
-        await init_db()
-        client = TestClient(app)
-        email, _token = register_user(client)
-        user_id = await get_user_id(email)
-
-        target_id = await seed_committed_memory(user_id, title="待重写", body="原始 body", memory_type=MemoryType.FACT, importance=0.6)
-
-        from src.memory.services.memory_rewriter import MemoryRewriter
-
-        async with async_session() as session:
-            rewriter = MemoryRewriter(session)
-            proposals = [{"action": "rewrite", "memory_id": target_id, "reason": "improve wording", "draft_body": "改写后的 body, 表达更清晰。"}]
-            result = await rewriter.apply_proposals(user_id=user_id, proposals=proposals)
-
-        assert result["applied_count"] == 0
-        assert result["failed"] == [{"reason": "memory_rewriter_retired_use_working_agent"}]
-
-        async with async_session() as session:
-            mem = (await session.execute(select(CommittedMemory).where(CommittedMemory.id == target_id))).scalar_one()
-        assert mem.status == CommittedStatus.ACTIVE
-        assert mem.body == "原始 body"
-        await cleanup_user_data(user_id)
-
-    asyncio.run(run())
-
-
-def test_rewriter_rejects_cross_user_relation_proposal():
-    async def run():
-        await init_db()
-        client = TestClient(app)
-        owner_email, _owner_token = register_user(client)
-        other_email, _other_token = register_user(client)
-        owner_id = await get_user_id(owner_email)
-        other_id = await get_user_id(other_email)
-        owner_memory_id = await seed_committed_memory(
-            owner_id, title="owner", body="owner body"
-        )
-        other_memory_id = await seed_committed_memory(
-            other_id, title="other", body="other body"
-        )
-
-        from src.memory.services.memory_rewriter import MemoryRewriter
-
-        async with async_session() as session:
-            result = await MemoryRewriter(session).apply_proposals(
-                user_id=owner_id,
-                proposals=[{
-                    "action": "link",
-                    "memory_ids": [owner_memory_id, other_memory_id],
-                    "relation_type": "supports",
-                    "reason": "must not cross ownership boundary",
-                }],
-            )
-            assert result["applied_count"] == 0
-            assert result["failed"][0]["reason"] == "memory_rewriter_retired_use_working_agent"
-
-        async with async_session() as session:
-            count = await session.scalar(
-                select(MemoryRelation.id).where(MemoryRelation.user_id == owner_id)
-            )
-            assert count is None
-
-        await cleanup_user_data(owner_id)
-        await cleanup_user_data(other_id)
-
-    asyncio.run(run())
-
-
 def test_relation_api_enforces_graph_invariants():
     async def run():
         await init_db()
@@ -559,6 +426,11 @@ def test_governance_endpoints_require_auth():
         for path, payload in [
             ("/api/memory/conflicts/check", {"body": "x"}),
             ("/api/memory/duplicates/find", {}),
+        ]:
+            resp = client.post(path, json=payload)
+            assert resp.status_code == 401
+
+        for path, payload in [
             ("/api/memory/duplicates/merge", {"primary_memory_id": "a", "secondary_memory_id": "b"}),
             ("/api/memory/rewriter/run", {}),
             ("/api/memory/rewriter/apply", {"proposals": []}),
@@ -566,7 +438,7 @@ def test_governance_endpoints_require_auth():
             ("/api/memory/hygiene/apply", {"approved": True, "suggestions": []}),
         ]:
             resp = client.post(path, json=payload)
-            assert resp.status_code == 401
+            assert resp.status_code in {404, 405}
 
     asyncio.run(run())
 

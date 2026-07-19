@@ -3,7 +3,7 @@
 决定系统如何"变聪明"，而不是乱变
 
 控制：
-- memory rewriter 是否允许执行
+- autonomous memory maintenance 是否来自统一工作 Agent
 - persona 是否更新
 - conflict 是否升级
 - decision 是否归档
@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 # 进化操作配置
 EVOLUTION_OPERATIONS = {
-    "memory_rewrite": {
-        "requires_approval": True,
+    "memory_maintenance": {
+        "requires_coordinator": True,
         "max_batch_size": 50,
-        "allowed_actions": ["merge", "rewrite", "archive", "link"],
+        "allowed_actions": ["merge", "supersede", "expire", "seal", "cleanup"],
     },
     "persona_update": {
         "requires_approval": False,
@@ -76,8 +76,8 @@ class EvolutionPolicy:
         config = EVOLUTION_OPERATIONS[operation_type]
         
         # 2. 根据操作类型进行特定检查
-        if operation_type == "memory_rewrite":
-            return await self._evaluate_memory_rewrite(evolution_request, config)
+        if operation_type == "memory_maintenance":
+            return await self._evaluate_memory_maintenance(evolution_request, config)
         elif operation_type == "persona_update":
             return await self._evaluate_persona_update(evolution_request, config)
         elif operation_type == "conflict_resolution":
@@ -91,29 +91,29 @@ class EvolutionPolicy:
             "metadata": {"operation_type": operation_type},
         }
 
-    async def _evaluate_memory_rewrite(
+    async def _evaluate_memory_maintenance(
         self,
         request: Dict[str, Any],
         config: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """评估记忆重写操作"""
-        proposals = request.get("proposals", [])
+        """Only the autonomous Working Agent coordinator may request writes."""
+        actions = request.get("actions", [])
         
         # 检查批量大小
-        if len(proposals) > config["max_batch_size"]:
+        if len(actions) > config["max_batch_size"]:
             return {
                 "action": DecisionAction.MODIFY,
-                "reason": f"batch_too_large: {len(proposals)} > {config['max_batch_size']}",
+                "reason": f"batch_too_large: {len(actions)} > {config['max_batch_size']}",
                 "metadata": {
-                    "original_size": len(proposals),
+                    "original_size": len(actions),
                     "max_size": config["max_batch_size"],
                     "truncated": True,
                 },
             }
         
         # 检查操作类型
-        for proposal in proposals:
-            action = proposal.get("action", "")
+        for item in actions:
+            action = item.get("action", "")
             if action not in config["allowed_actions"]:
                 return {
                     "action": DecisionAction.REJECT,
@@ -121,23 +121,21 @@ class EvolutionPolicy:
                     "metadata": {"disallowed_action": action},
                 }
         
-        # 检查是否需要审批
-        if config["requires_approval"] and not request.get("approved", False):
+        if config["requires_coordinator"] and not request.get("coordinator_authorized", False):
             return {
-                "action": DecisionAction.ROUTE,
-                "reason": "requires_approval",
+                "action": DecisionAction.REJECT,
+                "reason": "working_coordinator_required",
                 "metadata": {
-                    "route_to": "approval_queue",
-                    "operation_type": "memory_rewrite",
+                    "operation_type": "memory_maintenance",
                 },
             }
         
         return {
             "action": DecisionAction.ALLOW,
-            "reason": "memory_rewrite_approved",
+            "reason": "memory_maintenance_authorized",
             "metadata": {
-                "proposal_count": len(proposals),
-                "approved": True,
+                "action_count": len(actions),
+                "coordinator_authorized": True,
             },
         }
 

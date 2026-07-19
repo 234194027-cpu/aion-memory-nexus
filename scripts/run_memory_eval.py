@@ -22,6 +22,10 @@ from src.cognition.services.second_brain_eval import (  # noqa: E402
     SecondBrainEvalObservation,
     compute_second_brain_eval_metrics,
 )
+from src.execution.runtime.quality_eval import (  # noqa: E402
+    ConversationQualityObservation,
+    compute_quality_metrics,
+)
 
 
 CONVERSATION_EVAL_PATH = PROJECT_ROOT / "docs" / "eval" / "conversation-eval.jsonl"
@@ -37,6 +41,14 @@ CONVERSATION_SCENARIO_TYPES = (
     "tool_failure_timeout",
     "long_session_compressed",
     "no_memory_abstain",
+    "identity_and_rename",
+    "natural_answer",
+    "topic_switch",
+    "explicit_record",
+    "deadline_plan",
+    "next_day_continuation",
+    "working_handoff",
+    "proactive_cooldown",
 )
 
 RAW_EVENT_KINDS = (
@@ -179,6 +191,11 @@ def main() -> int:
         help="calculate metrics from an anonymous, human-labelled JSON observation array",
     )
     parser.add_argument(
+        "--v251-quality-metrics-file",
+        type=Path,
+        help="calculate content-free V2.5.1 conversation and memory quality metrics",
+    )
+    parser.add_argument(
         "--second-brain-metrics-file",
         type=Path,
         help="calculate anonymous V2 time/correction/relationship/open-loop/reflection/reminder slices",
@@ -232,6 +249,24 @@ def main() -> int:
             print(f"SecondBrainEval metrics input error: {exc}", file=sys.stderr)
             return 2
         print(json.dumps(compute_second_brain_eval_metrics(observations).to_dict(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.v251_quality_metrics_file:
+        try:
+            raw_observations = json.loads(args.v251_quality_metrics_file.read_text(encoding="utf-8"))
+            if not isinstance(raw_observations, list):
+                raise ValueError("V2.5.1 quality metrics file must contain a JSON array")
+            observations = [
+                ConversationQualityObservation.from_mapping(item)
+                for item in raw_observations
+                if isinstance(item, dict)
+            ]
+            if len(observations) != len(raw_observations):
+                raise ValueError("V2.5.1 quality metric items must be JSON objects")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"V2.5.1 quality metrics input error: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(compute_quality_metrics(observations), ensure_ascii=False, indent=2))
         return 0
 
     command = [sys.executable, "-X", "utf8", "-m", "pytest", *memory_eval_nodeids(), "-q", "-p", "no:faulthandler"]

@@ -6,6 +6,7 @@
 3. 支持冲突传播推断 (A↔B, B↔C → A↔C)
 4. 提供冲突查询接口 (供 Advisor / BeliefEngine 使用)
 """
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
@@ -18,6 +19,8 @@ from src.memory.models.committed_memory import CommittedMemory
 from src.memory.models.memory_embedding import MemoryEmbedding
 from src.memory.services.retrieval_engine import cosine_similarity
 from src.shared.ids.id_generator import generate_conflict_edge_id
+from src.shared.llm.model_gateway import ModelGateway
+from src.shared.llm.providers import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -367,13 +370,28 @@ class ConflictGraphEngine:
         Returns:
             tuple: (is_conflict, conflict_type, explanation)
         """
-        # TODO: 调用 LLM 判断冲突
-        # 当前简化：如果两条记忆类型相同但内容相反，认为冲突
-        # 未来需要更复杂的语义分析
-
-        # 临时方案：检查关键词
         text_a = (memory_a.body or "").lower()
         text_b = (memory_b.body or "").lower()
+        if not text_a or not text_b or text_a == text_b:
+            return False, "", ""
+        if memory_a.memory_type != memory_b.memory_type:
+            return False, "", ""
+        if memory_a.valid_until != memory_b.valid_until:
+            return False, "", ""
+
+        prefixes = ("地点:", "location:", "条件:", "condition:", "阶段:", "phase:")
+        conditions_a = {
+            str(item).strip().lower()
+            for item in (memory_a.tags or [])
+            if str(item).strip().lower().startswith(prefixes)
+        }
+        conditions_b = {
+            str(item).strip().lower()
+            for item in (memory_b.tags or [])
+            if str(item).strip().lower().startswith(prefixes)
+        }
+        if conditions_a and conditions_b and conditions_a != conditions_b:
+            return False, "", ""
 
         # 简单的反义词检测 (示例)
         opposite_pairs = [
@@ -388,6 +406,31 @@ class ConflictGraphEngine:
             if (word1 in text_a and word2 in text_b) or (word2 in text_a and word1 in text_b):
                 return True, "belief_conflict", f"语义相反: {word1} vs {word2}"
 
+        prompt = (
+            "只输出 JSON，不解释。判断两条用户记忆在相同时间和条件下是否不能同时为真。"
+            "条件不同、地点不同、偏好变化、计划不同节点都不是冲突。"
+            "格式：{\"conflict\":false,\"type\":\"factual_contradiction\","
+            "\"confidence\":0.0,\"explanation\":\"\"}。\n"
+            f"A: {memory_a.title[:160]}\n{text_a[:1000]}\n"
+            f"B: {memory_b.title[:160]}\n{text_b[:1000]}"
+        )
+        try:
+            raw = await ModelGateway(get_llm_provider()).generate_text(
+                prompt,
+                temperature=0.0,
+                max_tokens=180,
+                prompt_id="working-conflict-adjudication",
+                prompt_version="v2.5.1",
+            )
+            payload = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+            confidence = float(payload.get("confidence") or 0.0)
+            if bool(payload.get("conflict")) and confidence >= 0.90:
+                conflict_type = str(payload.get("type") or "factual_contradiction")
+                if conflict_type not in CONFLICT_TYPES:
+                    conflict_type = "factual_contradiction"
+                return True, conflict_type, str(payload.get("explanation") or "语义裁决确认冲突")[:500]
+        except Exception as exc:
+            logger.info("conflict adjudication degraded safely: %s", type(exc).__name__)
         return False, "", ""
 
     async def _create_conflict_edge(

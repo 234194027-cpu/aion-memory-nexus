@@ -8,7 +8,7 @@
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
 [![CI](https://github.com/234194027-cpu/aion-memory-nexus/actions/workflows/quality.yml/badge.svg)](https://github.com/234194027-cpu/aion-memory-nexus/actions/workflows/quality.yml)
 
-**当前版本：2.4.2 · 许可证：[MIT](LICENSE) · 开源状态：Public**
+**当前版本：2.5.1 · 许可证：[MIT](LICENSE) · 开源状态：Public**
 
 ## 不只是记忆库：你的可信第二大脑
 
@@ -31,7 +31,7 @@ Aion Memory Nexus 的目标不是替你“记住更多”，而是帮你**看见
 | 第二大脑与人生导师 | 汇集决策历史、人格假设、任务和时间线，支持决策复盘、模式识别、方案比较与行动建议。 |
 | 预测与情景分析 | 以历史证据、相似决策和当前约束生成可解释的情景推演；输出置信度与不确定性，而非伪装成确定事实。 |
 | 媒体与链接 | URL、文件、图片、表格、音频、视频先作为来源工件，再进入治理链路。 |
-| Graphiti / Neo4j（可选） | 仅作为可删除、可重建的时间关系投影；默认关闭，不能反写权威记忆。 |
+| Graphiti / Neo4j（可选） | 仅作为可删除、可重建的 Shadow 时间关系投影；不改变正式召回结果，也不能反写权威记忆。 |
 | 运维与可观测性 | Docker Compose、健康检查、指标、迁移、生产预检和受控运行时开关。 |
 
 ## 架构一览
@@ -121,10 +121,10 @@ docker compose up -d --build
 启动前建议运行只读预检：
 
 ```bash
-python scripts/production_preflight.py --env-file .env --compose-file docker-compose.yml --cert-dir certs
+python scripts/production_preflight.py --env-file .env --compose-file docker-compose.yml --cert-dir certs --public-url https://your-domain.example
 ```
 
-Graphiti/Neo4j 保持默认关闭。只有完成 Shadow 验证、模型限流测试和数据一致性核对后，才按 [Graphiti 运行手册](docs/graphiti-v3-runbook.md) 启用。
+Graphiti/Neo4j 保持默认关闭。V2.5.1 即使启用也只运行 Shadow 对比，不参与 Agent 上下文和正式召回排序；未来提升权限必须经过新的架构版本与独立验收。
 
 ## Agent 与 MCP
 

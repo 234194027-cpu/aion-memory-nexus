@@ -14,7 +14,7 @@
     <el-card class="runtime-card" v-loading="runtimeLoading">
       <template #header>
         <div class="section-title">
-        <h3>双 Agent V2.5</h3>
+        <h3>双 Agent V2.5.1</h3>
           <el-tag type="success">自主记忆治理</el-tag>
         </div>
       </template>
@@ -34,9 +34,45 @@
         <div><dt>自动合并</dt><dd>{{ workingStatus?.maintenance_actions?.merge ?? 0 }}</dd></div>
         <div><dt>来源清理</dt><dd>{{ (workingStatus?.maintenance_actions?.compact ?? 0) + (workingStatus?.maintenance_actions?.purge ?? 0) }}</dd></div>
         <div><dt>维护 Token</dt><dd>{{ workingStatus?.maintenance_token_used ?? 0 }}</dd></div>
+        <div><dt>维护安全状态</dt><dd>{{ maintenanceStateLabel(maintenanceControl?.state) }}</dd></div>
         <div><dt>文档来源检索</dt><dd>{{ workingStatus?.shared_cognition?.document_source_search ? '已启用' : '未启用' }}</dd></div>
         <div><dt>未确认线索</dt><dd>{{ workingStatus?.shared_cognition?.unconfirmed_clue_search ? '仅限澄清' : '未启用' }}</dd></div>
       </dl>
+      <div class="runtime-actions">
+        <el-button
+          v-if="maintenanceControl?.state === 'active'"
+          type="warning"
+          @click="pauseMaintenance"
+        >暂停高风险维护</el-button>
+        <el-button
+          v-else
+          type="primary"
+          @click="resumeMaintenance"
+        >进入 Shadow 恢复</el-button>
+        <span>{{ maintenanceControl?.pause_reason || '对话与事件采集不会被维护开关中断。' }}</span>
+      </div>
+    </el-card>
+
+    <el-card class="table-card maintenance-card">
+      <template #header><div class="section-title"><h3>最近维护动作</h3><span>自动合并、替代和过期保留 30 天回滚窗口</span></div></template>
+      <el-table :data="maintenanceActions" row-key="id" empty-text="暂无维护动作">
+        <el-table-column prop="action" label="动作" width="110" />
+        <el-table-column prop="state" label="状态" width="120" />
+        <el-table-column prop="reason_code" label="依据" min-width="220" />
+        <el-table-column label="执行时间" min-width="180"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
+        <el-table-column label="可回滚至" min-width="180"><template #default="{ row }">{{ formatTime(row.reversible_until) }}</template></el-table-column>
+        <el-table-column label="操作" width="110">
+          <template #default="{ row }">
+            <el-button
+              v-if="isRollbackAvailable(row)"
+              type="warning"
+              link
+              @click="rollbackAction(row)"
+            >回滚</el-button>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <el-card class="table-card">
@@ -188,7 +224,7 @@
 
         <section class="section-panel">
           <h3>策略</h3>
-          <el-tag type="info">严格审核，禁止自动提交</el-tag>
+          <el-tag type="success">工作 Agent 自动治理，来源可追溯</el-tag>
           <pre class="code-block">{{ JSON.stringify(bridge.policy_status.allowed_write_scopes, null, 2) }}</pre>
         </section>
       </div>
@@ -200,7 +236,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { agentsApi } from '../../api'
+import { agentsApi, runtimeApi } from '../../api'
 import { agentTypeLabel, recallLevelLabel } from '../../utils/labels'
 
 const loading = ref(false)
@@ -212,6 +248,8 @@ const bridgeVisible = ref(false)
 const oneTimeToken = ref('')
 const bridge = ref<any>(null)
 const workingStatus = ref<any>(null)
+const maintenanceControl = ref<any>(null)
+const maintenanceActions = ref<any[]>([])
 const runtimeLoading = ref(false)
 
 const createForm = reactive({
@@ -231,16 +269,60 @@ const fetchData = async () => {
   loading.value = true
   runtimeLoading.value = true
   try {
-    const [res, status] = await Promise.all([
+    const [res, status, control, actions] = await Promise.all([
       agentsApi.list(),
-      agentsApi.workingStatus()
+      agentsApi.workingStatus(),
+      runtimeApi.maintenanceControl(),
+      runtimeApi.maintenanceActions(20)
     ])
     agentList.value = normalizeList(res)
     workingStatus.value = status
+    maintenanceControl.value = control
+    maintenanceActions.value = actions?.items || []
   } finally {
     loading.value = false
     runtimeLoading.value = false
   }
+}
+
+const maintenanceStateLabel = (state?: string) => ({
+  active: '自动维护中',
+  shadow: 'Shadow 验证',
+  paused_automatically: '已自动熔断',
+  paused_manually: '已手动暂停',
+  recovering: '恢复验证中'
+}[state || ''] || state || '自动维护中')
+
+const pauseMaintenance = async () => {
+  const { value } = await ElMessageBox.prompt('请填写暂停原因，正常对话和事件采集不会停止。', '暂停高风险维护', {
+    confirmButtonText: '确认暂停', cancelButtonText: '取消', inputValue: '管理员主动检查'
+  })
+  await runtimeApi.pauseMaintenance(value)
+  ElMessage.success('高风险维护已暂停')
+  await fetchData()
+}
+
+const resumeMaintenance = async () => {
+  const { value } = await ElMessageBox.prompt('恢复前会先执行一次来源完整性 Shadow 验证。', '恢复自动维护', {
+    confirmButtonText: '开始验证', cancelButtonText: '取消', inputValue: '问题已排查'
+  })
+  await runtimeApi.resumeMaintenance(value)
+  ElMessage.success('已进入恢复验证状态')
+  await fetchData()
+}
+
+const isRollbackAvailable = (row: any) => {
+  if (!['merge', 'supersede', 'expire'].includes(row.action) || row.state !== 'completed' || !row.reversible_until) return false
+  return new Date(row.reversible_until).getTime() > Date.now()
+}
+
+const rollbackAction = async (row: any) => {
+  const { value } = await ElMessageBox.prompt('回滚会恢复原记忆状态并刷新摘要与索引，请填写原因。', '回滚维护动作', {
+    confirmButtonText: '确认回滚', cancelButtonText: '取消', inputValue: '自动治理结果需要撤回'
+  })
+  await runtimeApi.rollbackMaintenance(row.id, value)
+  ElMessage.success('维护动作已回滚')
+  await fetchData()
 }
 
 const handleCreate = async () => {
@@ -376,6 +458,21 @@ onMounted(fetchData)
   font-weight: 650;
 }
 
+.runtime-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e4e7ec;
+  color: #667085;
+  font-size: 13px;
+}
+
+.maintenance-card {
+  margin-bottom: 20px;
+}
+
 .policy-tag {
   margin-right: 6px;
   margin-bottom: 4px;
@@ -439,5 +536,11 @@ onMounted(fetchData)
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+@media (max-width: 767px) {
+  .page-container { padding: 0; }
+  .page-header, .runtime-actions { align-items: flex-start; flex-direction: column; }
+  .runtime-grid { grid-template-columns: 1fr; }
 }
 </style>

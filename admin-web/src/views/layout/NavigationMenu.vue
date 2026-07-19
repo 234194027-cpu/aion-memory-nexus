@@ -9,40 +9,46 @@
     active-text-color="#409eff"
     @select="emit('navigate')"
   >
-    <el-menu-item index="/daily">
-      <el-icon><Memo /></el-icon>
-      <template #title>今天</template>
+    <el-menu-item index="/dashboard">
+      <el-icon><DataAnalysis /></el-icon>
+      <template #title>首页</template>
     </el-menu-item>
 
-    <el-menu-item index="/advisor">
-      <el-icon><ChatDotRound /></el-icon>
-      <template #title>对话</template>
-    </el-menu-item>
-
-    <el-sub-menu index="/memory">
-      <template #title>
-        <el-icon><Collection /></el-icon>
-        <span>记忆</span>
-      </template>
-      <el-menu-item index="/memories"><el-icon><Document /></el-icon><template #title>正式记忆</template></el-menu-item>
+    <el-sub-menu index="today">
+      <template #title><el-icon><Memo /></el-icon><span>今日</span></template>
+      <el-menu-item index="/daily">每日简报</el-menu-item>
+      <el-menu-item index="/advisor">认知顾问</el-menu-item>
     </el-sub-menu>
 
-    <el-sub-menu index="/knowledge">
-      <template #title><el-icon><Share /></el-icon><span>人生知识</span></template>
-      <el-menu-item index="/persona"><el-icon><User /></el-icon><template #title>认识我</template></el-menu-item>
-      <el-menu-item index="/knowledge-workspace"><el-icon><Share /></el-icon><template #title>图谱与时间线</template></el-menu-item>
+    <el-sub-menu index="memory">
+      <template #title><el-icon><Collection /></el-icon><span>记忆</span></template>
+      <el-menu-item index="/memories">正式记忆</el-menu-item>
+      <el-menu-item index="/events">事件与来源</el-menu-item>
+      <el-menu-item index="/persona">人物画像</el-menu-item>
+      <el-menu-item index="/governance">治理审计</el-menu-item>
+      <el-menu-item index="/knowledge-workspace">知识工作区</el-menu-item>
     </el-sub-menu>
 
-    <el-menu-item index="/settings">
-      <el-icon><Setting /></el-icon>
-      <template #title>设置</template>
-    </el-menu-item>
+    <el-sub-menu index="agent">
+      <template #title><el-icon><Avatar /></el-icon><span>Agent</span></template>
+      <el-menu-item index="/agents">双 Agent Runtime</el-menu-item>
+      <el-menu-item index="/orchestration">任务编排</el-menu-item>
+    </el-sub-menu>
+
+    <el-sub-menu index="settings">
+      <template #title><el-icon><Setting /></el-icon><span>设置</span></template>
+      <el-menu-item index="/settings">通用与数据权利</el-menu-item>
+      <el-menu-item index="/wecom">企业微信</el-menu-item>
+      <el-menu-item index="/obsidian">Obsidian</el-menu-item>
+      <el-menu-item index="/llm-providers">模型提供商</el-menu-item>
+      <el-menu-item index="/about">项目版本</el-menu-item>
+    </el-sub-menu>
   </el-menu>
 </template>
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-import { Memo, Document, User, Collection, ChatDotRound, Setting, Share } from '@element-plus/icons-vue'
+import { Avatar, Collection, DataAnalysis, Memo, Setting } from '@element-plus/icons-vue'
 
 defineProps<{ collapsed: boolean }>()
 const emit = defineEmits<{ navigate: [] }>()

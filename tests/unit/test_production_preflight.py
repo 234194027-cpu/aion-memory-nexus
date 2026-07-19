@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.production_preflight import evaluate
+from scripts.production_preflight import _check_tls, evaluate
 
 
 def test_preflight_accepts_secure_fixture_without_exposing_values(tmp_path: Path) -> None:
@@ -136,3 +136,15 @@ def test_preflight_accepts_explicitly_authorized_solo_mode_with_system_token(tmp
     by_name = {check.name: check for check in checks}
 
     assert by_name["production_auth_mode"].status == "pass"
+
+
+def test_preflight_rejects_non_https_public_url(tmp_path: Path) -> None:
+    cert_dir = tmp_path / "certs"
+    cert_dir.mkdir()
+    (cert_dir / "life-memory.crt").write_text("certificate", encoding="utf-8")
+    (cert_dir / "life-memory.key").write_text("key", encoding="utf-8")
+
+    checks = {check.name: check for check in _check_tls(cert_dir, "http://memory.example.com")}
+
+    assert checks["tls_public_chain"].status == "fail"
+    assert "HTTPS" in checks["tls_public_chain"].detail

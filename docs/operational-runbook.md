@@ -12,7 +12,8 @@
 
 | 场景 | 当前策略 | 人工处理入口 |
 |---|---|---|
-| 记忆提取失败 | RawEvent 状态设为 `FAILED`；日志仅含事件 ID 与异常类型 | 检查事件状态后重新触发提取或人工审核 |
+| 记忆提取失败 | RawEvent 状态设为 `FAILED`；日志仅含事件 ID 与异常类型，补偿任务按退避策略恢复 | 在 Agent Runtime 检查失败原因和租约；修复依赖后由补偿扫描重新领取 |
+| 自动维护质量回归 | 高风险写入切换到 `paused_automatically`；正常对话和证据保留继续运行 | 修复来源或规则后请求恢复，先通过 Shadow 完整性检查再回到 `active` |
 | embedding 失败 | 指数退避重试；最终失败仅记录任务计数/异常类型 | 重跑 embedding backfill；数据库记忆仍可关键词检索 |
 | 外部向量索引失败 | best effort；数据库为权威源 | 重新构建索引，不将索引状态当作数据丢失 |
 | LLM/Embedding 不可用 | provider fallback 或调用失败指标增加 | 配置供应商、检查网络/限额，然后重试业务操作 |
@@ -27,7 +28,7 @@
 先在目标主机、迁移和重启前执行只读预检；脚本不会打印环境变量值、密码、Token 或连接 URL：
 
 ```bash
-python3 scripts/production_preflight.py --env-file .env.production --compose-file docker-compose.yml --cert-dir certs
+python3 scripts/production_preflight.py --env-file .env.production --compose-file docker-compose.yml --cert-dir certs --public-url https://your-domain.example
 ```
 
 预检会阻止占位密钥、弱 CORS、开发认证开关、缺失证书、Redis 无认证和浮动镜像标签；它不能替代真实的备份恢复演练，会明确输出 `MANUAL`。

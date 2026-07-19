@@ -1,12 +1,7 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from src.memory.models.memory_type import MemoryType
-from src.memory.tasks.memory_hygiene import (
-    _build_hygiene_suggestions,
-    build_hygiene_evolution_report,
-    hygiene_suggestions_to_rewrite_proposals,
-)
 from src.memory.services.memory_os import (
     build_agent_memory_protocol,
     build_context_tiers,
@@ -195,94 +190,3 @@ def test_retrieval_output_includes_memory_os_context_package():
     assert output["relation_graph"]["edges"][0]["relation_type"] == "supports"
     assert output["memory_evolution"]["state_operator"] == "retrieve"
     assert output["retrieval_trace"][0]["memory_uri"]
-
-
-def test_hygiene_evolution_report_finds_daily_maintenance_candidates():
-    now = datetime.now(timezone.utc)
-    old_low_conf = _memory("m_old", MemoryType.FACT, importance=0.5)
-    old_low_conf.confidence = 0.4
-    old_low_conf.valid_until = now - timedelta(days=1)
-    old_low_conf.tags = ["repeat"]
-
-    large_episode = _memory("m_large", MemoryType.TIMELINE_EVENT, importance=0.6)
-    large_episode.body = "x" * 1300
-    large_episode.tags = ["repeat"]
-
-    procedural = _memory("m_proc", MemoryType.DECISION, importance=0.9)
-    procedural.tags = ["repeat"]
-
-    report = build_hygiene_evolution_report([old_low_conf, large_episode, procedural])
-
-    assert report["state_operator"] == "nightly_hygiene"
-    assert "expire_or_rewrite_outdated_memories" in report["candidate_actions"]
-    assert "compact_large_memories" in report["candidate_actions"]
-    assert "promote_repeated_tags" in report["candidate_actions"]
-    assert report["low_confidence"][0]["memory_id"] == "m_old"
-    assert report["expired"][0]["memory_id"] == "m_old"
-    assert report["compaction_candidates"][0]["memory_id"] == "m_large"
-    assert report["promotion_candidates"][0]["tag"] == "repeat"
-    assert report["layer_summary"]["counts"]["procedural"] == 1
-
-
-def test_hygiene_suggestions_are_unified_and_never_auto_apply():
-    memory_evolution = {
-        "expired": [{"memory_id": "m1", "reason": "valid_until_passed"}],
-        "low_confidence": [{"memory_id": "m2", "reason": "confidence_below_threshold"}],
-        "promotion_candidates": [{"tag": "repeat", "count": 3}],
-        "compaction_candidates": [{"memory_id": "m3", "reason": "large_body_candidate_for_summary"}],
-    }
-
-    suggestions = _build_hygiene_suggestions(
-        duplicate_pairs=[{"memory_id_a": "a", "memory_id_b": "b"}],
-        stale_conflicts=[{"conflict_id": "c1", "related_memory_ids": ["m4"]}],
-        memory_evolution=memory_evolution,
-    )
-
-    types = {item["type"] for item in suggestions}
-    assert "merge_duplicate_memories" in types
-    assert "review_stale_conflict" in types
-    assert "expire_or_rewrite_outdated_memory" in types
-    assert "review_low_confidence_memory" in types
-    assert "promote_repeated_pattern" in types
-    assert "compact_large_memory" in types
-    assert all(item["auto_apply"] is False for item in suggestions)
-
-
-def test_hygiene_suggestions_convert_only_explicit_safe_actions():
-    converted = hygiene_suggestions_to_rewrite_proposals([
-        {
-            "type": "merge_duplicate_memories",
-            "memory_ids": ["m1", "m2"],
-            "reason": "duplicate_pair_above_threshold",
-            "auto_apply": True,
-        },
-        {
-            "type": "expire_or_rewrite_outdated_memory",
-            "memory_ids": ["m3"],
-            "reason": "valid_until_passed",
-            "auto_apply": True,
-        },
-        {
-            "type": "review_low_confidence_memory",
-            "memory_ids": ["m4"],
-            "reason": "confidence_below_threshold",
-            "auto_apply": True,
-        },
-    ])
-
-    assert converted["proposals"] == [
-        {
-            "action": "merge",
-            "memory_ids": ["m1", "m2"],
-            "reason": "duplicate_pair_above_threshold",
-            "merged_draft": None,
-        },
-        {
-            "action": "archive",
-            "memory_id": "m3",
-            "memory_ids": ["m3"],
-            "reason": "valid_until_passed",
-        },
-    ]
-    assert converted["unsupported"][0]["type"] == "review_low_confidence_memory"
-    assert converted["unsupported"][0]["reason"] == "unsupported_hygiene_suggestion_type"

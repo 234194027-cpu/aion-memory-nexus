@@ -124,7 +124,7 @@ python -m alembic downgrade <target-revision>
 
 | 任务名 | 模块 | 说明 |
 |--------|------|------|
-| `extract_candidate_memories` | `src.memory.tasks.memory_extraction` | 从事件抽取候选记忆 |
+| `process_memory_event` | `src.memory.tasks.memory_extraction` | 领取 RawEvent 并交给工作 Agent 的统一案件与正式记忆治理链路 |
 | `extract_media_artifact` | `src.platform.tasks.media_extraction` | 媒体内容抽取 |
 
 ```powershell

@@ -59,17 +59,21 @@ class MemoryDeduplicator:
         threshold = max(0.0, min(1.0, float(similarity_threshold)))
         top_k = max(1, int(top_k))
 
-        memories = await self._load_active_memories(user_id)
-        if not memories:
+        targets = await self._load_target_memories(
+            user_id=user_id,
+            memory_id=memory_id,
+            limit=min(top_k, 50),
+        )
+        if not targets:
             return []
-
-        if memory_id:
-            target_ids = {memory_id}
-        else:
-            memories = memories[: max(top_k, len(memories))]
-            target_ids = {m.id for m in memories}
-
-        emb_map = await self._load_embeddings_map([m.id for m in memories])
+        candidates = await self._load_bounded_candidate_pool(
+            user_id=user_id,
+            targets=targets,
+            neighbors_per_target=top_k,
+        )
+        memories_by_id = {item.id: item for item in [*targets, *candidates]}
+        memories = list(memories_by_id.values())
+        emb_map = await self._load_embeddings_map(list(memories_by_id))
 
         for m in memories:
             if m.id not in emb_map:
@@ -79,17 +83,19 @@ class MemoryDeduplicator:
 
         pairs: List[Dict] = []
         seen_pairs: set = set()
+        comparison_pool = [*targets, *candidates]
 
-        for m in memories:
-            if m.id not in target_ids:
-                continue
+        for m in targets:
             vec = emb_map.get(m.id)
             if not vec:
                 continue
             scored: List[tuple] = []
-            for other in memories:
-                if other.id == m.id:
-                    continue
+            compatible = [
+                other
+                for other in comparison_pool
+                if other.id != m.id and self._same_merge_partition(m, other)
+            ][:top_k]
+            for other in compatible:
                 other_vec = emb_map.get(other.id)
                 if not other_vec:
                     continue
@@ -97,7 +103,7 @@ class MemoryDeduplicator:
                 if sim >= threshold:
                     scored.append((other, sim))
             scored.sort(key=lambda x: x[1], reverse=True)
-            for other, sim in scored[:5]:
+            for other, sim in scored[:top_k]:
                 pair_key = tuple(sorted([m.id, other.id]))
                 if pair_key in seen_pairs:
                     continue
@@ -134,7 +140,7 @@ class MemoryDeduplicator:
         - 软合并在事务内完成, embedding 重生成 **不在事务里**, 避免
           provider.embed() 慢导致事务挂死。
         - 默认 ``regenerate_embedding=True`` 在事务后异步执行, 调用方
-          可在快速合并场景传 False, 由后台 hygiene 任务统一重建。
+          可在快速合并场景传 False, 由后台维护任务统一重建。
         - 维度对齐: 真实 provider 不可用时回退到 fallback 且记录
           ``embedding_model='fallback'`` 与 ``dimension``, 检索时按维度
           分桶比对, 避免越界。
@@ -260,18 +266,79 @@ class MemoryDeduplicator:
             except Exception:
                 pass
 
+    async def regenerate_embedding(self, memory_id: str, body: str) -> None:
+        """Public governed boundary used after an autonomous rollback."""
+        await self._regenerate_embedding_safe(memory_id, body)
+
     # --------------------------------------------------------------- helpers
 
-    async def _load_active_memories(self, user_id: str) -> List[CommittedMemory]:
-        result = await self.db.execute(
+    async def _load_target_memories(
+        self,
+        *,
+        user_id: str,
+        memory_id: str | None,
+        limit: int,
+    ) -> List[CommittedMemory]:
+        statement = select(CommittedMemory).where(
+            CommittedMemory.user_id == user_id,
+            CommittedMemory.status == CommittedStatus.ACTIVE,
+        )
+        if memory_id:
+            statement = statement.where(CommittedMemory.id == memory_id)
+        else:
+            statement = statement.order_by(
+                CommittedMemory.updated_at.desc(),
+                CommittedMemory.created_at.desc(),
+            ).limit(max(1, min(limit, 50)))
+        return list((await self.db.execute(statement)).scalars())
+
+    async def _load_bounded_candidate_pool(
+        self,
+        *,
+        user_id: str,
+        targets: List[CommittedMemory],
+        neighbors_per_target: int,
+    ) -> List[CommittedMemory]:
+        """Use indexed blocking keys and a hard cap; never scan the full user library."""
+        target_ids = [item.id for item in targets]
+        memory_types = list({item.memory_type for item in targets})
+        sensitivities = list({item.sensitivity for item in targets})
+        scopes = list({item.visibility_scope for item in targets})
+        pool_limit = max(1, min(len(targets) * neighbors_per_target, 1000))
+        statement = (
             select(CommittedMemory)
             .where(
                 CommittedMemory.user_id == user_id,
                 CommittedMemory.status == CommittedStatus.ACTIVE,
+                CommittedMemory.id.notin_(target_ids),
+                CommittedMemory.memory_type.in_(memory_types),
+                CommittedMemory.sensitivity.in_(sensitivities),
+                CommittedMemory.visibility_scope.in_(scopes),
             )
-            .order_by(CommittedMemory.created_at.desc())
+            .order_by(
+                CommittedMemory.updated_at.desc(),
+                CommittedMemory.created_at.desc(),
+            )
+            .limit(pool_limit)
         )
-        return list(result.scalars().all())
+        return list((await self.db.execute(statement)).scalars())
+
+    @staticmethod
+    def _same_merge_partition(first: CommittedMemory, second: CommittedMemory) -> bool:
+        if (
+            first.memory_type != second.memory_type
+            or first.sensitivity != second.sensitivity
+            or first.visibility_scope != second.visibility_scope
+        ):
+            return False
+        if first.valid_until != second.valid_until:
+            return False
+        first_tags = {str(item).strip().lower() for item in (first.tags or []) if str(item).strip()}
+        second_tags = {str(item).strip().lower() for item in (second.tags or []) if str(item).strip()}
+        prefixes = ("地点:", "location:", "条件:", "condition:", "阶段:", "phase:")
+        first_conditions = {item for item in first_tags if item.startswith(prefixes)}
+        second_conditions = {item for item in second_tags if item.startswith(prefixes)}
+        return not (first_conditions and second_conditions and first_conditions != second_conditions)
 
     async def _load_embeddings_map(self, memory_ids: List[str]) -> Dict[str, List[float]]:
         if not memory_ids:

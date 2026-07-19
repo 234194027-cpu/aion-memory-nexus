@@ -138,13 +138,6 @@ export const governanceApi = {
   dedupAnalysis: (data?: any) => api.post<any>('/governance/dedup-analysis', data || {}) as any,
   // 冲突检测：POST /api/governance/conflict-check -> { status, conflicts: [...], total, warnings }
   conflictCheck: (data?: any) => api.post<any>('/governance/conflict-check', data || {}) as any,
-  // 记忆体检：生成可审核的治理建议，不直接写入
-  hygieneRun: (data?: any) => api.post<any>('/memory/hygiene/run', data || {}) as any,
-  // 应用已审核的体检建议；后端要求 approved=true，dry_run=true 时只预览转换结果
-  hygieneApply: (data: any) => api.post<any>('/memory/hygiene/apply', data) as any,
-  // 合并记忆：POST /api/governance/merge { primary_id, secondary_id } -> { status: "merged", primary_id, secondary_id, merged_memory_id }
-  merge: (data: { primary_id: string; secondary_id: string }) =>
-    api.post<any>('/governance/merge', data) as any,
 }
 
 // ============ 认知顾问 API ============
@@ -185,6 +178,20 @@ export const runtimeApi = {
     api.post<ConversationTurnResponse>('/runtime/conversation/turn', data) as any,
   conversationState: () => api.get<any>('/runtime/conversation/state') as any,
   openLoops: () => api.get<{ items: OpenLoopItem[] }>('/runtime/open-loops') as any,
+  maintenanceActions: (limit = 50) => api.get<any>('/runtime/working/maintenance/actions', { params: { limit } }) as any,
+  maintenanceControl: () => api.get<any>('/runtime/working/maintenance/control') as any,
+  pauseMaintenance: (reason: string) => api.post<any>('/runtime/working/maintenance/pause', { reason }) as any,
+  resumeMaintenance: (reason: string) => api.post<any>('/runtime/working/maintenance/resume', { reason }) as any,
+  rollbackMaintenance: (actionId: string, reason: string) =>
+    api.post<any>(`/runtime/working/maintenance/actions/${actionId}/rollback`, { reason }) as any,
+}
+
+// ============ 数据权利 API ============
+export const dataPortabilityApi = {
+  exportAccount: () => api.get<Blob>('/data-portability/export', { responseType: 'blob' }) as any,
+  deleteAccount: (confirmation: string) =>
+    api.delete<any>('/data-portability/account', { data: { confirmation } }) as any,
+  deleteConversation: () => api.delete<any>('/runtime/conversation/data', { params: { confirm: 'DELETE' } }) as any,
 }
 
 // ============ 每日简报 API ============

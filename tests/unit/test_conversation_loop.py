@@ -577,6 +577,12 @@ def test_delete_conversation_data_removes_ledger_and_only_conversation_evidence(
 
     from src.execution.runtime import conversation_deletion
     from src.execution.runtime.workspace import AgentWorkspaceService
+    from src.execution.models.memory_operations import (
+        EvidenceSeal,
+        MemoryMaintenanceAction,
+        MemoryMaintenanceRun,
+        UserMemoryBrief,
+    )
     from src.memory.models.committed_memory import CommittedMemory, CommittedStatus
     from src.memory.models.memory_type import MemoryType
     from src.memory.models.memory_source import MemorySource
@@ -704,6 +710,37 @@ def test_delete_conversation_data_removes_ledger_and_only_conversation_evidence(
                     valid_from=now,
                     content_hash="memory-hash-mixed",
                 )
+                sealed_memory = CommittedMemory(
+                    id="memory-sealed",
+                    user_id="u-delete",
+                    memory_type=MemoryType.FACT,
+                    title="封存后的对话来源",
+                    body="只由对话封存证明支持",
+                    status=CommittedStatus.ACTIVE,
+                    valid_from=now,
+                    content_hash="memory-hash-sealed",
+                )
+                seal = EvidenceSeal(
+                    id="seal-conversation",
+                    user_id="u-delete",
+                    source_type=SourceType.CONVERSATION.value,
+                    source_event_id="event-conversation-sealed",
+                    content_hash="sealed-hash",
+                    excerpt="只由对话封存证明支持",
+                    sensitivity=SensitivityLevel.NORMAL.value,
+                    seal_metadata={"source_turn_id": turn.id},
+                )
+                maintenance_run = MemoryMaintenanceRun(
+                    id="run-conversation",
+                    user_id="u-delete",
+                    kind="retention",
+                    state="completed",
+                    idempotency_key="run-conversation-key",
+                    cursor={},
+                    counters={},
+                    token_budget=0,
+                    token_used=0,
+                )
                 db.add_all(
                     [
                         session,
@@ -715,6 +752,9 @@ def test_delete_conversation_data_removes_ledger_and_only_conversation_evidence(
                         independent_event,
                         full_memory,
                         mixed_memory,
+                        sealed_memory,
+                        seal,
+                        maintenance_run,
                         MemorySource(
                             id="source-full-conversation",
                             memory_id=full_memory.id,
@@ -732,6 +772,34 @@ def test_delete_conversation_data_removes_ledger_and_only_conversation_evidence(
                             memory_id=mixed_memory.id,
                             raw_event_id=independent_event.id,
                             source_type=SourceType.MANUAL,
+                        ),
+                        MemorySource(
+                            id="source-sealed-conversation",
+                            memory_id=sealed_memory.id,
+                            evidence_seal_id=seal.id,
+                            source_type=SourceType.CONVERSATION,
+                        ),
+                        MemoryMaintenanceAction(
+                            id="action-conversation",
+                            run_id=maintenance_run.id,
+                            user_id="u-delete",
+                            action="purge",
+                            state="completed",
+                            input_memory_ids=[sealed_memory.id],
+                            input_event_ids=[conversation_event.id],
+                            output_memory_id=sealed_memory.id,
+                            evidence_seal_id=seal.id,
+                            reason_code="conversation_retention",
+                            details={},
+                            idempotency_key="action-conversation-key",
+                        ),
+                        UserMemoryBrief(
+                            id="brief-conversation",
+                            user_id="u-delete",
+                            content="含已删除对话",
+                            memory_ids=[full_memory.id, mixed_memory.id, sealed_memory.id],
+                            source_revision="brief-before-delete",
+                            token_estimate=10,
                         ),
                     ]
                 )
@@ -756,6 +824,17 @@ def test_delete_conversation_data_removes_ledger_and_only_conversation_evidence(
                 kept_memory = await db.get(CommittedMemory, mixed_memory.id)
                 assert kept_memory is not None
                 assert kept_memory.status is CommittedStatus.ACTIVE
+                deleted_sealed_memory = await db.get(CommittedMemory, sealed_memory.id)
+                assert deleted_sealed_memory.status is CommittedStatus.DELETED
+                assert await db.get(EvidenceSeal, seal.id) is None
+                assert await db.get(MemoryMaintenanceAction, "action-conversation") is None
+                assert await db.get(MemoryMaintenanceRun, maintenance_run.id) is None
+                rebuilt_brief = await db.scalar(
+                    select(UserMemoryBrief).where(UserMemoryBrief.user_id == "u-delete")
+                )
+                assert rebuilt_brief is not None
+                assert full_memory.id not in rebuilt_brief.memory_ids
+                assert sealed_memory.id not in rebuilt_brief.memory_ids
                 assert await db.scalar(
                     select(func.count())
                     .select_from(MemorySource)

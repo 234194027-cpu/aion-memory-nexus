@@ -64,6 +64,21 @@
       </div>
     </LmSettingsSection>
 
+    <LmSettingsSection title="数据权利" description="导出覆盖对话、正式记忆、案件、封存证据、维护审计和认知摘要，不包含密钥或系统 Prompt。">
+      <div class="data-rights">
+        <div><strong>导出全部个人数据</strong><small>下载 life-memory-export/v4 JSON 文件。</small></div>
+        <el-button :loading="dataActionLoading === 'export'" @click="exportAccountData">导出数据</el-button>
+      </div>
+      <div class="data-rights">
+        <div><strong>删除全部对话数据</strong><small>删除对话原文、Episode、相关证据和仅由对话支撑的正式记忆。</small></div>
+        <el-button type="warning" :loading="dataActionLoading === 'conversation'" @click="deleteConversationData">删除对话</el-button>
+      </div>
+      <div class="data-rights data-rights--danger">
+        <div><strong>删除账户全部数据</strong><small>清除数据库记录、向量索引、媒体文件和 Agent Workspace；此操作不可撤销。</small></div>
+        <el-button type="danger" :loading="dataActionLoading === 'account'" @click="deleteAccountData">删除全部数据</el-button>
+      </div>
+    </LmSettingsSection>
+
     <LmSettingsSection title="数据与外部接入" description="管理外部 Agent 接入、数据同步和版本兼容信息。">
       <div class="settings-grid">
         <RouterLink class="settings-card" to="/agents">
@@ -101,14 +116,15 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
-import { wecomApi } from '../../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { dataPortabilityApi, wecomApi } from '../../api'
 import LmPageHeader from '../../components/LmPageHeader.vue'
 import LmSettingsSection from '../../components/LmSettingsSection.vue'
 
 const hours = Array.from({ length: 24 }, (_, hour) => hour)
 const preferencesLoading = ref(true)
 const preferencesSaving = ref(false)
+const dataActionLoading = ref('')
 const conversationPreferences = reactive({
   enabled: true,
   quiet_hours_start: 22 as number | null,
@@ -122,7 +138,7 @@ const loadConversationPreferences = async () => {
     const response = await wecomApi.conversationPreferences()
     Object.assign(conversationPreferences, response)
   } catch (error: any) {
-    ElMessage.error(error?.message || '主动提问偏好加载失败')
+    ElMessage.error(error?.message || '对话主动性偏好加载失败')
   } finally {
     preferencesLoading.value = false
   }
@@ -139,6 +155,49 @@ const saveConversationPreferences = async () => {
     await loadConversationPreferences()
   } finally {
     preferencesSaving.value = false
+  }
+}
+
+const exportAccountData = async () => {
+  dataActionLoading.value = 'export'
+  try {
+    const blob = await dataPortabilityApi.exportAccount()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `life-memory-export-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('数据导出已开始下载')
+  } finally {
+    dataActionLoading.value = ''
+  }
+}
+
+const deleteConversationData = async () => {
+  await ElMessageBox.confirm('将删除全部对话原文及仅由对话支撑的派生记忆，是否继续？', '删除对话数据', {
+    type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消'
+  })
+  dataActionLoading.value = 'conversation'
+  try {
+    await dataPortabilityApi.deleteConversation()
+    ElMessage.success('对话数据已删除，正式记忆摘要已重新生成')
+  } finally {
+    dataActionLoading.value = ''
+  }
+}
+
+const deleteAccountData = async () => {
+  const { value } = await ElMessageBox.prompt('此操作会删除全部个人数据。请输入“删除我的全部数据”确认。', '永久删除数据', {
+    type: 'error', confirmButtonText: '永久删除', cancelButtonText: '取消', inputPlaceholder: '删除我的全部数据'
+  })
+  dataActionLoading.value = 'account'
+  try {
+    await dataPortabilityApi.deleteAccount(value)
+    ElMessage.success('全部个人数据已删除')
+    window.setTimeout(() => window.location.assign('/'), 800)
+  } finally {
+    dataActionLoading.value = ''
   }
 }
 
@@ -159,6 +218,12 @@ onMounted(loadConversationPreferences)
 .settings-card__mark { color: var(--lm-color-primary); font-family: ui-monospace, monospace; font-size: 12px; }
 .settings-card--wide { width: 100%; }
 .question-preferences { display: grid; border: 1px solid var(--lm-color-border); border-radius: var(--lm-radius-sm); overflow: hidden; }
+.data-rights { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 78px; padding: 15px 16px; border: 1px solid var(--lm-color-border); border-bottom: 0; }
+.data-rights:first-of-type { border-radius: var(--lm-radius-sm) var(--lm-radius-sm) 0 0; }
+.data-rights:last-of-type { border-bottom: 1px solid var(--lm-color-border); border-radius: 0 0 var(--lm-radius-sm) var(--lm-radius-sm); }
+.data-rights > div { display: grid; gap: 5px; }
+.data-rights small { color: var(--lm-color-text-secondary); line-height: 1.45; }
+.data-rights--danger { background: rgba(245, 108, 108, .05); }
 .question-preference-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 82px; padding: 16px; border-bottom: 1px solid var(--lm-color-border); }
 .question-preference-row:last-child { border-bottom: 0; }
 .question-preference-row > div:first-child { display: grid; gap: 5px; max-width: 560px; }
@@ -167,5 +232,5 @@ onMounted(loadConversationPreferences)
 .quiet-hours { display: flex; align-items: center; gap: 8px; min-width: 230px; }
 .quiet-hours .el-select { width: 106px; }
 @media (max-width: 767px) { .settings-grid { grid-template-columns: 1fr; } .settings-card { min-height: 74px; } }
-@media (max-width: 767px) { .question-preference-row { align-items: flex-start; flex-direction: column; gap: 12px; } .quiet-hours { width: 100%; } }
+@media (max-width: 767px) { .question-preference-row, .data-rights { align-items: flex-start; flex-direction: column; gap: 12px; } .quiet-hours { width: 100%; } }
 </style>

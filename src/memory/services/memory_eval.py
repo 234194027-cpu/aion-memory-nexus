@@ -124,21 +124,21 @@ class MemoryEvalMetrics:
 
 
 MEMORY_EVAL_CASES: tuple[MemoryEvalCase, ...] = (
-    MemoryEvalCase("ME-01", "single_fact_recall", ("tests/integration/test_gen1_acceptance.py::test_retrieval_engine_keyword_fallback_works",)),
-    MemoryEvalCase("ME-02", "multi_session_combination", ("tests/integration/test_agent_mcp_sync.py::test_agent_roundtrip_uses_policy_to_commit_and_search",)),
+    MemoryEvalCase("ME-01", "single_fact_recall", ("tests/integration/test_gen3_closed_loop.py::test_loop1_memory_recall",)),
+    MemoryEvalCase("ME-02", "multi_session_combination", ("tests/unit/test_agent_runtime.py::test_conversation_ledger_is_durable_bounded_in_context_and_resettable",)),
     MemoryEvalCase("ME-03", "current_vs_historical_view", ("tests/unit/test_llm_governance_evaluation.py::test_temporal_and_epistemic_context_is_visible_to_retrieval_prompt",)),
-    MemoryEvalCase("ME-04", "knowledge_update", ("tests/integration/test_gen1_acceptance.py::test_event_to_candidate_to_memory_lifecycle",)),
+    MemoryEvalCase("ME-04", "knowledge_update", ("tests/integration/test_cip_closed_loop.py::test_preclassified_user_evidence_traverses_case_decision_and_formal_memory",)),
     MemoryEvalCase("ME-05", "temporal_expiry", ("tests/unit/test_memory_governance_policy.py::test_expired_active_memory_is_not_retrievable",)),
-    MemoryEvalCase("ME-06", "epistemic_separation", ("tests/unit/test_llm_governance_evaluation.py::test_candidate_provenance_keeps_user_assertion_separate_from_model_inference",)),
-    MemoryEvalCase("ME-07", "conflict_retention", ("tests/unit/test_memory_os.py::test_hygiene_evolution_report_finds_daily_maintenance_candidates",)),
-    MemoryEvalCase("ME-08", "duplicate_commit_guard", ("tests/integration/test_cip_closed_loop.py::test_commit_engine_accept",)),
+    MemoryEvalCase("ME-06", "epistemic_separation", ("tests/unit/test_llm_governance_evaluation.py::test_proposition_provenance_keeps_user_assertion_separate_from_model_inference",)),
+    MemoryEvalCase("ME-07", "maintenance_rollback", ("tests/unit/test_memory_operations_v251.py::test_merge_rollback_restores_both_memories_and_removes_derived_links",)),
+    MemoryEvalCase("ME-08", "duplicate_commit_guard", ("tests/unit/test_memory_operations_v251.py::test_dedup_uses_bounded_neighbors_with_ten_thousand_memories",)),
     MemoryEvalCase("ME-09", "abstention_without_evidence", ("tests/unit/test_memory_governance_policy.py::test_no_textual_match_returns_no_importance_ranked_memories",)),
     MemoryEvalCase("ME-10", "citation_accuracy", ("tests/integration/test_security_regressions.py::test_memory_ask_discards_fabricated_citations_and_uses_real_source_type",)),
     MemoryEvalCase("ME-11", "no_source_answer", ("tests/integration/test_security_regressions.py::test_memory_ask_discards_fabricated_citations_and_uses_real_source_type",)),
     MemoryEvalCase("ME-12", "sensitive_memory_isolation", ("tests/unit/test_llm_governance_evaluation.py::test_task_scope_excludes_private_and_sensitive_memories",)),
-    MemoryEvalCase("ME-13", "cross_user_isolation", ("tests/integration/test_gen1_acceptance.py::test_memory_isolation_between_users",)),
+    MemoryEvalCase("ME-13", "cross_user_isolation", ("tests/integration/test_data_portability.py::test_account_export_is_user_scoped_and_deletion_cleans_derivatives",)),
     MemoryEvalCase("ME-14", "deleted_memory_not_recalled", ("tests/integration/test_security_regressions.py::test_delete_memory_removes_content_sources_and_embeddings",)),
-    MemoryEvalCase("ME-15", "correction_supersedes_current", ("tests/integration/test_gen1_acceptance.py::test_memory_forget_supersede_audit_trail",)),
+    MemoryEvalCase("ME-15", "correction_supersedes_current", ("tests/unit/test_working_memory_case.py::test_same_proposition_creates_a_superseding_formal_memory_revision",)),
     MemoryEvalCase("ME-16", "prompt_injection_resistance", ("tests/unit/test_llm_governance_evaluation.py::test_untrusted_raw_event_cannot_replace_extraction_instructions",)),
 )
 

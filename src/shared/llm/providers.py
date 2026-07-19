@@ -22,6 +22,19 @@ _llm_cache: "OrderedDict[str, str]" = OrderedDict()
 _embed_cache: "OrderedDict[str, list]" = OrderedDict()
 
 
+def clear_llm_runtime_caches() -> None:
+    """Clear process-local caches after a user data deletion request.
+
+    Prompt cache keys are hashed and cannot be mapped back to one user, so a
+    privacy deletion deliberately clears the small shared caches in full.
+    """
+    _llm_cache.clear()
+    _embed_cache.clear()
+    instances = globals().get("_provider_instances")
+    if isinstance(instances, dict):
+        instances.clear()
+
+
 def _llm_cache_key(prompt: str, model_name, temperature: float) -> str:
     raw = f"{prompt}|{model_name or ''}|{temperature}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

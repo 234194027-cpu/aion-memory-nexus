@@ -64,7 +64,7 @@ def test_temporal_and_epistemic_context_is_visible_to_retrieval_prompt() -> None
     assert "never present an earlier or ended memory as the user's current" in prompt
 
 
-def test_candidate_provenance_keeps_user_assertion_separate_from_model_inference() -> None:
+def test_proposition_provenance_keeps_user_assertion_separate_from_model_inference() -> None:
     assert derive_epistemic_status("manual", memory_type="fact") == "user_assertion"
     assert derive_epistemic_status("manual", memory_type="persona_hypothesis") == "model_inference"
     assert derive_epistemic_status("agent_api", memory_type="fact") == "agent_assertion"

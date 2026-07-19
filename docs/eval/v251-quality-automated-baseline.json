@@ -1,0 +1,79 @@
+[
+  {
+    "observation_id": "auto-identity-001",
+    "scenario_type": "identity_and_rename",
+    "context_continuous": true,
+    "assistant_fact_leak": false,
+    "response_latency_ms": 1,
+    "working_model_calls": 0
+  },
+  {
+    "observation_id": "auto-answer-001",
+    "scenario_type": "natural_answer",
+    "context_continuous": true,
+    "memory_hit": true,
+    "source_covered": true,
+    "assistant_fact_leak": false,
+    "working_model_calls": 1,
+    "retained_memory_tokens": 48
+  },
+  {
+    "observation_id": "auto-switch-001",
+    "scenario_type": "topic_switch",
+    "context_continuous": true,
+    "assistant_fact_leak": false,
+    "working_model_calls": 0
+  },
+  {
+    "observation_id": "auto-record-001",
+    "scenario_type": "explicit_record",
+    "memory_hit": true,
+    "source_covered": true,
+    "assistant_fact_leak": false,
+    "wrong_merge": false,
+    "working_model_calls": 1,
+    "retained_memory_tokens": 52
+  },
+  {
+    "observation_id": "auto-deadline-001",
+    "scenario_type": "deadline_plan",
+    "memory_hit": true,
+    "source_covered": true,
+    "wrong_merge": false,
+    "working_model_calls": 1,
+    "retained_memory_tokens": 61
+  },
+  {
+    "observation_id": "auto-next-day-001",
+    "scenario_type": "next_day_continuation",
+    "context_continuous": true,
+    "memory_hit": true,
+    "source_covered": true,
+    "assistant_fact_leak": false
+  },
+  {
+    "observation_id": "auto-correction-001",
+    "scenario_type": "correction",
+    "source_covered": true,
+    "assistant_fact_leak": false,
+    "wrong_merge": false,
+    "correction_correct": true,
+    "working_model_calls": 1,
+    "retained_memory_tokens": 55
+  },
+  {
+    "observation_id": "auto-cleanup-001",
+    "scenario_type": "retention_and_rollback",
+    "source_covered": true,
+    "wrong_merge": false,
+    "cleanup_safe": true,
+    "working_model_calls": 0
+  },
+  {
+    "observation_id": "auto-proactive-001",
+    "scenario_type": "proactive_cooldown",
+    "proactive_relevant": true,
+    "assistant_fact_leak": false,
+    "working_model_calls": 0
+  }
+]

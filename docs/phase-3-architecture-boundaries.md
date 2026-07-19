@@ -1,15 +1,15 @@
 # 第三阶段工程边界与收口清单
 
-日期：2026-07-12。本文件是当前代码盘点，不改变 API、任务调度或用户流程。
+日期：2026-07-19。本文已按 V2.5.1 当前代码边界更新。
 
 ## 当前边界
 
 | 边界 | 主要入口 | 当前职责 | 已验证的兼容性保障 |
 |---|---|---|---|
 | Ingestion | `src/memory/api/events.py`、`ingest.py`、`obsidian.py`、企微 handlers、Agent 同步 | 把外部输入保存为 RawEvent 并触发异步提取 | RawEvent 不被摘要覆盖；提取任务有租约、过期回收、Celery 优先与本地降级。 |
-| Memory Governance | `src/memory/api/candidates.py`、`commit.py`、`services/governance_policy.py`、`memory_lifecycle.py` | 审核候选、控制自动提交、状态审计 | 认识状态阻止模型/Agent/外部断言自动提升；状态转移只追加。 |
+| Memory Governance | `src/execution/services/working_agent.py`、`memory_commit_service.py`、`memory_operations.py` | 工作案件、证据决策、正式写入、自动维护与回滚 | 只有统一工作 Agent 服务可创建正式记忆；每次自动维护都有动作记录、来源证明和 30 天可逆窗口。 |
 | Retrieval | `src/memory/services/retrieval_engine.py`、`src/memory/api/memories.py` | scope、敏感度、有效期、检索与回答上下文 | 过期记忆和无文本证据不会进入重要性兜底召回。 |
-| Knowledge | `src/cognition/api/knowledge_workspace.py`、Wiki/关系/时间线模型与服务 | 只读聚合、版本、来源和关系展示 | 现有关系数据库支持有效期；未引入图数据库。 |
+| Knowledge | `src/cognition/api/knowledge_workspace.py`、Wiki/关系/时间线模型与服务 | 只读聚合、版本、来源和关系展示 | 关系数据库是权威来源；Graphiti 仅运行不影响召回结果的 Shadow 评测。 |
 | Advisor | `src/cognition/services/advisor_engine.py`、daily/weekly API | 基于已授权上下文提出建议和回顾 | 当前继续使用既有 retrieval / governance 边界。 |
 | Platform | `src/platform/channels`、`src/platform/api`、`src/shared/db/scheduler.py` | 企微、媒体、鉴权、调度和运行环境 | 生产预检和受控试运行 Runbook 定义了外部依赖边界。 |
 

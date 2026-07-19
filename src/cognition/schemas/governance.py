@@ -1,4 +1,4 @@
-"""Gen 2 Governance Schemas — Conflict / Dedup / Rewrite 请求与响应模型.
+"""Gen 2 Governance Schemas — Conflict / bounded dedup / relations.
 
 风格与项目其他 schema (memories.py / agents.py) 保持一致:
 - BaseModel from pydantic
@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -90,124 +90,6 @@ class DuplicateFindResponse(BaseModel):
     pairs: List[DuplicatePair] = []
     scanned: int = 0
     warnings: List[str] = []
-
-
-class DuplicateMergeRequest(BaseModel):
-    primary_memory_id: str
-    secondary_memory_id: str
-    merged_body: Optional[str] = None
-
-
-class DuplicateMergeResponse(BaseModel):
-    primary_memory_id: str
-    secondary_memory_id: str
-    secondary_status: str
-    merged_body_preview: Optional[str] = None
-    merged_at: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Memory Rewriter
-# ---------------------------------------------------------------------------
-
-
-class RewriterRunRequest(BaseModel):
-    target_types: Optional[List[str]] = Field(
-        default=None,
-        description="只重写指定 memory_type 的零碎 memory，留空 = 全部",
-    )
-    max_clusters: int = Field(default=20, ge=1, le=200)
-    dry_run: bool = Field(
-        default=True,
-        description="True = 只生成 proposals，不写库；False = 立即 apply",
-    )
-
-
-class RewriteProposal(BaseModel):
-    action: str = Field(..., description="merge | rewrite | archive | link")
-    memory_ids: Optional[List[str]] = None
-    memory_id: Optional[str] = None
-    reason: str
-    merged_draft: Optional[str] = None
-    draft_body: Optional[str] = None
-    relation_type: Optional[str] = None
-
-
-class RewriterRunResponse(BaseModel):
-    user_id: str
-    rewritten_count: int
-    merges_proposed: int
-    proposals: List[RewriteProposal] = []
-    applied: bool
-    generated_at: str
-    warnings: List[str] = []
-
-
-class RewriterApplyRequest(BaseModel):
-    proposals: List[RewriteProposal]
-
-
-class RewriterApplyResponse(BaseModel):
-    user_id: str
-    applied_count: int
-    failed: List[dict] = []
-    applied_at: str
-
-
-# ---------------------------------------------------------------------------
-# Hygiene Review
-# ---------------------------------------------------------------------------
-
-
-class HygieneRunRequest(BaseModel):
-    dedup_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
-    importance_floor: float = Field(default=0.4, ge=0.0, le=1.0)
-    max_pairs_per_user: int = Field(default=20, ge=1, le=200)
-
-
-class HygieneSuggestion(BaseModel):
-    type: str = Field(..., min_length=1)
-    priority: Optional[str] = None
-    memory_ids: List[str] = []
-    conflict_id: Optional[str] = None
-    tag: Optional[str] = None
-    reason: Optional[str] = None
-    proposal: dict[str, Any] = {}
-    auto_apply: bool = False
-
-
-class HygieneRunResponse(BaseModel):
-    user_id: str
-    duplicate_pairs: List[dict] = []
-    stale_conflicts: List[dict] = []
-    memory_evolution: dict[str, Any] = {}
-    hygiene_suggestions: List[HygieneSuggestion] = []
-    ran_at: str
-    stats: dict[str, Any] = {}
-    warnings: List[str] = []
-
-
-class HygieneApplyRequest(BaseModel):
-    suggestions: List[HygieneSuggestion]
-    approved: bool = Field(
-        default=False,
-        description="Must be true before any hygiene suggestion is applied.",
-    )
-    dry_run: bool = Field(
-        default=False,
-        description="True converts suggestions to proposals without modifying memory.",
-    )
-
-
-class HygieneApplyResponse(BaseModel):
-    user_id: str
-    approved: bool
-    dry_run: bool
-    proposals: List[dict] = []
-    unsupported: List[dict] = []
-    applied_count: int = 0
-    failed: List[dict] = []
-    applied_at: str
 
 
 # ---------------------------------------------------------------------------

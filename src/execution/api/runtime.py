@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.execution.models.agent_runtime import AgentHandoff, AgentRun, AgentStep
 from src.execution.models.memory_work import MemoryWorkCase, MemoryWorkDecision, MemoryWorkEvidence
-from src.execution.models.memory_operations import EvidenceSeal, MemoryMaintenanceAction, MemoryMaintenanceRun, UserMemoryBrief
+from src.execution.models.memory_operations import EvidenceSeal, MemoryMaintenanceAction, MemoryMaintenanceControl, MemoryMaintenanceRun, UserMemoryBrief
 from src.memory.models.committed_memory import CommittedMemory
 from src.memory.models.raw_event import ProcessingStatus, RawEvent
+from src.memory.models.graph_projection import GraphShadowObservation
 from src.execution.schemas.runtime import (
     AttentionItemResponse,
     AttentionListResponse,
@@ -47,6 +49,19 @@ from src.shared.version import get_runtime_profiles
 
 
 router = APIRouter()
+
+
+class MaintenanceControlRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=256)
+
+
+class MaintenanceRollbackRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=256)
+
+
+class MaintenanceQualityReportRequest(BaseModel):
+    report_id: str = Field(min_length=3, max_length=96)
+    metrics: dict
 
 
 def _enum_value(value) -> str:
@@ -250,6 +265,9 @@ async def working_status(
     ).all()
     seal_count = await db.scalar(select(func.count(EvidenceSeal.id)).where(EvidenceSeal.user_id == user.id))
     brief = await db.scalar(select(UserMemoryBrief).where(UserMemoryBrief.user_id == user.id))
+    control = await db.scalar(
+        select(MemoryMaintenanceControl).where(MemoryMaintenanceControl.user_id == user.id)
+    )
     maintenance_run_rows = (
         await db.execute(
             select(MemoryMaintenanceRun.state, func.count(MemoryMaintenanceRun.id))
@@ -260,6 +278,20 @@ async def working_status(
     maintenance_token_used = await db.scalar(
         select(func.coalesce(func.sum(MemoryMaintenanceRun.token_used), 0)).where(
             or_(MemoryMaintenanceRun.user_id == user.id, MemoryMaintenanceRun.user_id.is_(None))
+        )
+    )
+    graph_shadow_count = await db.scalar(
+        select(func.count(GraphShadowObservation.id)).where(GraphShadowObservation.user_id == user.id)
+    )
+    graph_shadow_latency = await db.scalar(
+        select(func.avg(GraphShadowObservation.graph_latency_ms)).where(GraphShadowObservation.user_id == user.id)
+    )
+    graph_shadow_source_coverage = await db.scalar(
+        select(func.avg(GraphShadowObservation.source_coverage)).where(GraphShadowObservation.user_id == user.id)
+    )
+    graph_shadow_novel = await db.scalar(
+        select(func.coalesce(func.sum(GraphShadowObservation.novel_verified_count), 0)).where(
+            GraphShadowObservation.user_id == user.id
         )
     )
     recent_runs = list(
@@ -283,7 +315,7 @@ async def working_status(
     ]
     counts = {str(status): int(count) for status, count in case_rows}
     return {
-        "ledger_version": "memory-operations-v2.5",
+        "ledger_version": "memory-operations-v2.5.1",
         "case_counts": counts,
         "active_backlog": sum(
             counts.get(status, 0)
@@ -308,6 +340,23 @@ async def working_status(
             "memory_count": len(brief.memory_ids or []) if brief is not None else 0,
             "token_estimate": brief.token_estimate if brief is not None else 0,
         },
+        "maintenance_control": {
+            "state": control.state if control is not None else "active",
+            "pause_reason": control.pause_reason if control is not None else None,
+            "integrity_fault": bool(control.integrity_fault) if control is not None else False,
+            "paused_at": control.paused_at if control is not None else None,
+            "resumed_at": control.resumed_at if control is not None else None,
+            "updated_at": control.updated_at if control is not None else None,
+        },
+        "graph_shadow": {
+            "enabled": bool(settings.GRAPHITI_ENABLED),
+            "shadow_mode": bool(settings.GRAPHITI_SHADOW_MODE),
+            "observation_count": int(graph_shadow_count or 0),
+            "average_latency_ms": round(float(graph_shadow_latency), 2) if graph_shadow_latency is not None else None,
+            "average_source_coverage": round(float(graph_shadow_source_coverage), 4) if graph_shadow_source_coverage is not None else None,
+            "novel_verified_count": int(graph_shadow_novel or 0),
+            "active_write_authority": False,
+        },
         "shared_cognition": {
             "formal_memory_retrieval": True,
             "document_source_search": True,
@@ -318,6 +367,150 @@ async def working_status(
             user_id=user.id
         ),
     }
+
+
+@router.get("/working/maintenance/actions")
+async def list_maintenance_actions(
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    rows = list(
+        (
+            await db.execute(
+                select(MemoryMaintenanceAction)
+                .where(MemoryMaintenanceAction.user_id == user.id)
+                .order_by(MemoryMaintenanceAction.created_at.desc())
+                .limit(limit)
+            )
+        ).scalars()
+    )
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "run_id": item.run_id,
+                "action": item.action,
+                "state": item.state,
+                "input_memory_ids": item.input_memory_ids,
+                "input_event_ids": item.input_event_ids,
+                "output_memory_id": item.output_memory_id,
+                "reason_code": item.reason_code,
+                "reversible_until": item.reversible_until,
+                "rolled_back_at": item.rolled_back_at,
+                "rollback_action_id": item.rollback_action_id,
+                "created_at": item.created_at,
+            }
+            for item in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.get("/working/maintenance/control")
+async def get_maintenance_control(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    from src.execution.services.memory_operations import MemoryOperationsCoordinator
+
+    control = await MemoryOperationsCoordinator(db).get_control(user.id)
+    await db.commit()
+    return {
+        "state": control.state,
+        "pause_reason": control.pause_reason,
+        "last_error_code": control.last_error_code,
+        "integrity_fault": bool(control.integrity_fault),
+        "shadow_passes": int(control.shadow_passes or 0),
+        "paused_at": control.paused_at,
+        "resumed_at": control.resumed_at,
+        "updated_at": control.updated_at,
+    }
+
+
+@router.post("/working/maintenance/pause")
+async def pause_maintenance(
+    payload: MaintenanceControlRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    from src.execution.services.memory_operations import MemoryOperationsCoordinator
+
+    control = await MemoryOperationsCoordinator(db).pause_control(
+        user.id,
+        reason=payload.reason,
+        manual=True,
+        actor=user.id,
+    )
+    await db.commit()
+    return {"state": control.state, "pause_reason": control.pause_reason, "paused_at": control.paused_at}
+
+
+@router.post("/working/maintenance/resume")
+async def resume_maintenance(
+    payload: MaintenanceControlRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    from src.execution.services.memory_operations import MemoryOperationsCoordinator
+
+    control = await MemoryOperationsCoordinator(db).request_resume(
+        user.id,
+        actor=user.id,
+        reason=payload.reason,
+    )
+    await db.commit()
+    return {"state": control.state, "message": "shadow_validation_required"}
+
+
+@router.post("/working/maintenance/actions/{action_id}/rollback")
+async def rollback_maintenance_action(
+    action_id: str,
+    payload: MaintenanceRollbackRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    from src.execution.services.memory_operations import MemoryOperationsCoordinator
+
+    try:
+        action = await MemoryOperationsCoordinator(db).rollback_action(
+            user_id=user.id,
+            action_id=action_id,
+            actor=user.id,
+            reason=payload.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await db.commit()
+    return {"status": "rolled_back", "rollback_action_id": action.id}
+
+
+@router.post("/working/maintenance/quality-report")
+async def submit_maintenance_quality_report(
+    payload: MaintenanceQualityReportRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    from src.execution.services.memory_operations import MemoryOperationsCoordinator
+
+    allowed = {
+        "schema", "observation_count", "scenario_count", "context_continuity_rate",
+        "memory_hit_rate", "source_coverage", "assistant_fact_leak_rate",
+        "wrong_merge_rate", "correction_accuracy", "proactive_relevance",
+        "response_p95_ms", "average_working_model_calls",
+        "average_tokens_per_retained_memory", "cleanup_safety_rate",
+    }
+    if set(payload.metrics).difference(allowed):
+        raise HTTPException(status_code=400, detail="quality_report_contains_unsupported_fields")
+    control = await MemoryOperationsCoordinator(db).apply_quality_report(
+        user.id,
+        metrics=payload.metrics,
+        report_id=payload.report_id,
+    )
+    await db.commit()
+    return {"maintenance_state": control.state, "pause_reason": control.pause_reason}
 
 
 @router.get("/working/cases")

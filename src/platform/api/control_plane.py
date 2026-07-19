@@ -238,8 +238,9 @@ async def decide_system_evolution(
     
     请求体：
     {
-        "operation_type": "memory_rewrite|persona_update|conflict_resolution|decision_archive",
-        "proposals": [],
+        "operation_type": "memory_maintenance|persona_update|conflict_resolution|decision_archive",
+        "actions": [],
+        "coordinator_authorized": true,
         "evidence_count": 10,
         "confidence": 0.8,
         "decision_age_days": 60,

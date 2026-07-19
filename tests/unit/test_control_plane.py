@@ -110,16 +110,17 @@ class TestEvolutionPolicy:
         return EvolutionPolicy()
 
     @pytest.mark.asyncio
-    async def test_memory_rewrite_requires_approval(self, policy):
+    async def test_memory_maintenance_requires_working_coordinator(self, policy):
         result = await policy.evaluate(
             {
-                "operation_type": "memory_rewrite",
-                "proposals": [{"action": "merge", "memory_ids": ["m1", "m2"]}],
-                "approved": False,
+                "operation_type": "memory_maintenance",
+                "actions": [{"action": "merge", "memory_ids": ["m1", "m2"]}],
+                "coordinator_authorized": False,
             },
             "user_123",
         )
-        assert result["action"] == DecisionAction.ROUTE
+        assert result["action"] == DecisionAction.REJECT
+        assert result["reason"] == "working_coordinator_required"
 
 
 class TestControlPlaneIntegration:

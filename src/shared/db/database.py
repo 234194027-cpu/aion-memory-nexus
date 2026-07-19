@@ -92,7 +92,7 @@ def _import_all_models() -> None:
         ConversationTurn,
     )
     from src.execution.models.memory_work import MemoryWorkCase, MemoryWorkDecision, MemoryWorkEvidence  # noqa: F401
-    from src.execution.models.memory_operations import EvidenceSeal, MemoryMaintenanceAction, MemoryMaintenanceRun, UserMemoryBrief  # noqa: F401
+    from src.execution.models.memory_operations import EvidenceSeal, MemoryMaintenanceAction, MemoryMaintenanceControl, MemoryMaintenanceRun, UserMemoryBrief  # noqa: F401
     from src.execution.models.audit_log import AuditLog  # noqa: F401
     from src.execution.models.custom_llm_provider import CustomLLMProvider  # noqa: F401
     from src.execution.models.life_task import LifeTask  # noqa: F401
@@ -102,7 +102,7 @@ def _import_all_models() -> None:
     from src.execution.models.user import User  # noqa: F401
     from src.memory.models.committed_memory import CommittedMemory  # noqa: F401
     from src.memory.models.data_lifecycle_audit import DataLifecycleAudit  # noqa: F401
-    from src.memory.models.graph_projection import GraphProjection, GraphReplayCheckpoint  # noqa: F401
+    from src.memory.models.graph_projection import GraphProjection, GraphReplayCheckpoint, GraphShadowObservation  # noqa: F401
     from src.memory.models.memory_embedding import MemoryEmbedding  # noqa: F401
     from src.memory.models.memory_state_transition import MemoryStateTransition  # noqa: F401
     from src.memory.models.memory_source import MemorySource  # noqa: F401

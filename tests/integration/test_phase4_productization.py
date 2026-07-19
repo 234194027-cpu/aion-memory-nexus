@@ -104,46 +104,14 @@ class TestSuite1_Stability:
         dedup._copy_sources = AsyncMock()
         dedup._regenerate_embedding_safe = AsyncMock()
 
-        mock_db.begin = MagicMock()
-        mock_db.begin.return_value.__aenter__ = AsyncMock()
-        mock_db.begin.return_value.__aexit__ = AsyncMock()
+        mock_db.begin_nested = MagicMock()
+        mock_db.begin_nested.return_value.__aenter__ = AsyncMock()
+        mock_db.begin_nested.return_value.__aexit__ = AsyncMock()
         mock_db.flush = AsyncMock()
 
         result = await dedup.merge("p1", "s1")
         assert result == "p1"
         dedup._regenerate_embedding_safe.assert_called_once()
-
-    async def test_1_4_hygiene_returns_suggestions_only(self):
-        from src.memory.tasks.memory_hygiene import run_nightly_hygiene
-
-        mock_db = AsyncMock()
-
-        with patch("src.memory.tasks.memory_hygiene.MemoryDeduplicator") as MockDedup:
-            mock_dedup = MockDedup.return_value
-            mock_dedup.find_duplicates = AsyncMock(return_value=[
-                {"memory_id_a": "a1", "memory_id_b": "b1", "similarity": 0.95, "suggested_action": "merge"},
-            ])
-
-            with patch("src.memory.tasks.memory_hygiene._load_active_importance_ids"):
-                with patch("src.memory.tasks.memory_hygiene.ConflictRecord") as MockCR:
-                    MockCR.user_id = "user_id"
-                    MockCR.status = "status"
-                    MockCR.created_at = "created_at"
-                    MockCR.id = "id"
-                    MockCR.past_memory_id = "past_memory_id"
-                    MockCR.current_memory_id = "current_memory_id"
-                    MockCR.severity = "severity"
-
-                    mock_result = MagicMock()
-                    mock_result.scalars.return_value.all.return_value = []
-                    mock_db.execute = AsyncMock(return_value=mock_result)
-
-                    result = await run_nightly_hygiene(mock_db, "user_1", dedup_threshold=0.9)
-
-        assert "duplicate_pairs" in result
-        assert "stale_conflicts" in result
-        assert "stats" in result
-        assert result["user_id"] == "user_1"
 
     async def test_1_5_recency_decay_halves_at_60_days(self):
         from src.memory.services.retrieval_engine import RetrievalEngine

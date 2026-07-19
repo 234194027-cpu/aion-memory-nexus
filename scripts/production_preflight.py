@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 import re
+import socket
+import ssl
 import sys
 from urllib.parse import urlparse
 
@@ -152,7 +155,53 @@ def _check_compose(path: Path) -> list[Check]:
     ]
 
 
-def evaluate(*, env_file: Path, compose_file: Path, cert_dir: Path) -> list[Check]:
+def _check_tls(cert_dir: Path, public_url: str | None) -> list[Check]:
+    certificate = cert_dir / "life-memory.crt"
+    private_key = cert_dir / "life-memory.key"
+    files_present = certificate.is_file() and private_key.is_file()
+    checks = [Check(
+        "tls_certificate_files",
+        "pass" if files_present else "fail",
+        "Nginx certificate and key files are present" if files_present else "provide certs/life-memory.crt and certs/life-memory.key",
+    )]
+    if files_present:
+        try:
+            decoded = ssl._ssl._test_decode_cert(str(certificate))  # type: ignore[attr-defined]
+            expires = datetime.strptime(decoded["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+            subject = decoded.get("subject")
+            issuer = decoded.get("issuer")
+            valid = expires > datetime.now(timezone.utc) and subject != issuer
+            checks.append(Check(
+                "tls_local_certificate",
+                "pass" if valid else "fail",
+                "certificate is CA-issued and not expired" if valid else "certificate is expired or self-signed",
+            ))
+        except (OSError, KeyError, ValueError, ssl.SSLError):
+            checks.append(Check("tls_local_certificate", "manual", "certificate contents could not be decoded during local preflight"))
+
+    if public_url:
+        parsed = urlparse(public_url)
+        host = parsed.hostname
+        port = parsed.port or 443
+        if parsed.scheme != "https" or not host:
+            checks.append(Check("tls_public_chain", "fail", "PUBLIC_BASE_URL must be a valid HTTPS URL"))
+        else:
+            try:
+                context = ssl.create_default_context()
+                with socket.create_connection((host, port), timeout=5) as raw:
+                    with context.wrap_socket(raw, server_hostname=host) as secured:
+                        # A default client context performs both CA-chain and
+                        # hostname verification during the TLS handshake.
+                        secured.getpeercert()
+                checks.append(Check("tls_public_chain", "pass", "public certificate chain and hostname are trusted"))
+            except (OSError, ssl.SSLError, ssl.CertificateError):
+                checks.append(Check("tls_public_chain", "fail", "public HTTPS certificate chain or hostname validation failed"))
+    else:
+        checks.append(Check("tls_public_chain", "manual", "run preflight with --public-url to verify the public certificate chain"))
+    return checks
+
+
+def evaluate(*, env_file: Path, compose_file: Path, cert_dir: Path, public_url: str | None = None) -> list[Check]:
     checks: list[Check] = []
     if not env_file.is_file():
         checks.append(Check("env_file", "fail", f"environment file not found: {env_file}"))
@@ -164,13 +213,7 @@ def evaluate(*, env_file: Path, compose_file: Path, cert_dir: Path) -> list[Chec
     else:
         checks.extend(_check_compose(compose_file))
 
-    certificate = cert_dir / "life-memory.crt"
-    private_key = cert_dir / "life-memory.key"
-    checks.append(Check(
-        "tls_certificate_files",
-        "pass" if certificate.is_file() and private_key.is_file() else "fail",
-        "Nginx certificate and key files are present" if certificate.is_file() and private_key.is_file() else "provide certs/life-memory.crt and certs/life-memory.key",
-    ))
+    checks.extend(_check_tls(cert_dir, public_url))
     checks.append(Check(
         "backup_restore_drill",
         "manual",
@@ -184,12 +227,14 @@ def main() -> int:
     parser.add_argument("--env-file", default=".env.production", help="Environment file to inspect without printing values.")
     parser.add_argument("--compose-file", default="docker-compose.yml", help="Compose file to inspect.")
     parser.add_argument("--cert-dir", default="certs", help="Directory containing Nginx TLS files.")
+    parser.add_argument("--public-url", help="Public HTTPS URL whose trusted chain and hostname must validate.")
     args = parser.parse_args()
 
     checks = evaluate(
         env_file=Path(args.env_file),
         compose_file=Path(args.compose_file),
         cert_dir=Path(args.cert_dir),
+        public_url=args.public_url,
     )
     for check in checks:
         print(f"[{check.status.upper()}] {check.name}: {check.detail}")

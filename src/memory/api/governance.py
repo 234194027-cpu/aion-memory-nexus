@@ -1,14 +1,13 @@
-"""记忆治理 API — 去重分析 / 冲突检查 / 合并 端点。
+"""记忆治理 API — 只读去重分析与冲突检查。
 
 为前端 governance 页面提供:
 - POST /api/governance/dedup-analysis  调用 MemoryDeduplicator.find_duplicates
 - POST /api/governance/conflict-check   返回最近的 ConflictRecord 列表
-- POST /api/governance/merge            接收 {primary_id, secondary_id} 调用 MemoryDeduplicator.merge
 """
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,12 +25,6 @@ class DedupAnalysisRequest(BaseModel):
     memory_id: Optional[str] = None
     similarity_threshold: float = 0.85
     top_k: int = 20
-
-
-class MergeRequest(BaseModel):
-    primary_id: str
-    secondary_id: str
-    merged_body: Optional[str] = None
 
 
 @router.post("/dedup-analysis")
@@ -112,37 +105,3 @@ async def conflict_check(
             "total": 0,
             "warnings": [f"server_error: {type(e).__name__}"],
         }
-
-
-@router.post("/merge")
-async def merge_memories(
-    request: MergeRequest,
-    db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user),
-):
-    """合并两条 memory: secondary 标记 SUPERSEDED, primary body 替换。"""
-    if request.primary_id == request.secondary_id:
-        raise HTTPException(status_code=400, detail="primary_id and secondary_id must be different")
-
-    dedup = MemoryDeduplicator(db)
-    try:
-        merged_id = await dedup.merge(
-            primary_memory_id=request.primary_id,
-            secondary_memory_id=request.secondary_id,
-            merged_body=request.merged_body,
-            expected_user_id=user.id,
-        )
-    except LookupError as le:
-        raise HTTPException(status_code=404, detail=str(le))
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        logger.exception(f"merge_memories failed: {e}")
-        raise HTTPException(status_code=500, detail="merge_failed")
-
-    return {
-        "status": "merged",
-        "primary_id": request.primary_id,
-        "secondary_id": request.secondary_id,
-        "merged_memory_id": merged_id,
-    }

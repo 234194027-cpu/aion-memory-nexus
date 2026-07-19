@@ -1,7 +1,9 @@
 import asyncio
+import hashlib
 import math
 import re
 import logging
+from time import perf_counter
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
@@ -10,9 +12,11 @@ from datetime import datetime, timezone
 from src.memory.models.committed_memory import CommittedMemory, CommittedStatus
 from src.memory.models.memory_embedding import MemoryEmbedding
 from src.memory.models.memory_type import MemoryType
+from src.memory.models.graph_projection import GraphShadowObservation
 from src.execution.models.memory_relation import MemoryRelation
 from src.shared.config import settings
 from src.shared.llm.providers import get_llm_provider
+from src.shared.ids.id_generator import generate_id
 from src.memory.prompts.retrieval import build_retrieval_prompt
 from src.memory.services.memory_os import (
     build_context_tiers,
@@ -260,6 +264,7 @@ class RetrievalEngine:
         )
         from src.memory.services.graph_projection import retrieve_verified_graph_context
 
+        graph_started = perf_counter()
         graph_context = await retrieve_verified_graph_context(
             self.db,
             user_id=user_id,
@@ -267,14 +272,32 @@ class RetrievalEngine:
             project_id=project_id,
             recall_level=recall_level,
         )
+        graph_latency_ms = max(0, round((perf_counter() - graph_started) * 1000))
         context["graph_context"] = graph_context
-        # Shadow mode records a safe comparison payload but leaves the existing
-        # pgvector/BM25 ranking untouched.  Active mode enriches L1/L2 only
-        # with provenance-verified temporal paths; it never writes memory.
-        if graph_context["relations"] and not settings.GRAPHITI_SHADOW_MODE:
-            context["context_tiers"]["L1"]["graph_time_relations"] = graph_context["relations"]
-            context["context_tiers"]["L2"]["graph_paths"] = graph_context["relations"]
-        context["meta"]["graph_mode"] = graph_context["mode"]
+        # V2.5.1 is deliberately shadow-only: Graphiti output is measured but
+        # can never alter baseline ranking or the L1/L2 context supplied to an
+        # Agent. Promotion requires a future explicit architecture release.
+        context["meta"]["graph_mode"] = "shadow" if settings.GRAPHITI_ENABLED else "disabled"
+        if settings.GRAPHITI_ENABLED and settings.GRAPHITI_SHADOW_MODE:
+            baseline_ids = [item.id for item in prioritized[:top_k]]
+            graph_ids = [str(item) for item in graph_context.get("source_memory_ids", [])]
+            relations = graph_context.get("relations", [])
+            source_refs = sum(len(item.get("sources") or []) for item in relations if isinstance(item, dict))
+            coverage = 1.0 if not relations else min(1.0, source_refs / len(relations))
+            self.db.add(GraphShadowObservation(
+                id=generate_id("gso"),
+                user_id=user_id,
+                query_hash=hashlib.sha256(question.encode("utf-8")).hexdigest(),
+                baseline_memory_ids=baseline_ids,
+                graph_memory_ids=graph_ids,
+                graph_relation_count=len(relations),
+                novel_verified_count=len(set(graph_ids).difference(baseline_ids)),
+                source_coverage=coverage,
+                graph_latency_ms=graph_latency_ms,
+                token_used=0,
+                mode="shadow",
+            ))
+            await self.db.flush()
 
         return context
 

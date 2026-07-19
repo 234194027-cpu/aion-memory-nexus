@@ -35,7 +35,7 @@ def _assert_user_id_matches(authenticated_user: User, requested_user_id: str) ->
 class CheckWritePermissionRequest(BaseModel):
     user_id: str = Field(..., description="用户 ID")
     agent_id: str = Field(..., description="Agent ID")
-    write_type: str = Field(..., description="写入类型: candidate_memory / committed_memory / decision / task")
+    write_type: str = Field(..., description="写入类型: raw_event / committed_memory / decision / task")
 
 
 class CheckWritePermissionResponse(BaseModel):

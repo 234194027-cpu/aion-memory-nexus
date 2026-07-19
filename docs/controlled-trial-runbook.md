@@ -12,11 +12,11 @@
 
 ## RawEvent 提取恢复
 
-迁移 `014_add_raw_event_processing_lease` 为既有 RawEvent 增加可空的 `processing_started_at`、可回填默认值为零的 `processing_attempts` 和仅记录异常类型的 `processing_error`。提取器以 15 分钟租约原子领取 QUEUED 或过期 PROCESSING 事件；候选/正式记忆写入和 `COMPLETED` 状态在同一提交中完成。调度扫描会把过期租约放回既有 QUEUED 队列，失败事件仍保持 FAILED，避免无依据的无限重试。
+迁移 `014_add_raw_event_processing_lease` 为既有 RawEvent 增加可空的 `processing_started_at`、可回填默认值为零的 `processing_attempts` 和仅记录异常类型的 `processing_error`。提取器以 15 分钟租约原子领取 QUEUED 或过期 PROCESSING 事件；工作案件、证据、治理决策、正式记忆写入和 `COMPLETED` 状态由统一工作 Agent 链路完成。调度扫描会把过期租约放回既有 QUEUED 队列，失败事件仍保持 FAILED，避免无依据的无限重试。
 
 > 当前 V3 口径：旧候选模型已完成迁移收口。回滚时先停止提取 worker、确认没有 PROCESSING 事件；迁移回退不得绕过 RawEvent、Working Case、CommittedMemory 或来源记录。
 
-迁移 `015_add_memory_state_transitions` 追加候选/正式记忆的状态转移审计表。它不回填、覆盖或重写旧记忆；降级仅删除新增审计表。生产迁移前应先导出该表（如果已写入），再执行 `alembic downgrade 014`。
+迁移 `015_add_memory_state_transitions` 追加正式记忆的状态转移审计表。它不回填、覆盖或重写旧记忆；降级仅删除新增审计表。生产迁移前应先导出该表（如果已写入），再执行 `alembic downgrade 014`。
 
 ## 建议恢复目标
 
@@ -35,8 +35,8 @@
 | 场景 | 操作 | 期望证据 |
 |---|---|---|
 | 企微连接 | 使用已配置的测试 Bot 建连、断连、重连 | 连接状态、一次测试消息、无秘密回显 |
-| 写入 | 测试账号发送明确的非敏感文本 | RawEvent 仅追加；候选可追溯到该 RawEvent |
-| 提取 | 正常返回、429、超时、无效 JSON、断流各一次（如供应商允许） | 候选/失败状态、重试/降级、任务指标；不得伪造成功 |
+| 写入 | 测试账号发送明确的非敏感文本 | RawEvent 仅追加；正式记忆可追溯到案件、决策和该 RawEvent |
+| 提取 | 正常返回、429、超时、无效 JSON、断流各一次（如供应商允许） | 案件/失败状态、重试/降级、任务指标；不得伪造成功 |
 | 检索 | 当前事实、历史事实、无证据问题、私有/敏感边界 | 引用真实来源；过期/删除/越权记忆不返回 |
 | 纠正与忘记 | 创建更正、撤销和删除测试 fixture | 旧版本不作为当前事实；主库、Wiki、关系、索引和缓存按生命周期闭环清理 |
 

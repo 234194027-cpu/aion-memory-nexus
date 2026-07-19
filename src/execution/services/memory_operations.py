@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.execution.models.agent_runtime import AgentHandoff, AgentHandoffStatus, AgentRole, AgentRun, AgentSession
@@ -20,6 +20,7 @@ from src.execution.models.conversation import ConversationAttentionCandidate
 from src.execution.models.memory_operations import (
     EvidenceSeal,
     MemoryMaintenanceAction,
+    MemoryMaintenanceControl,
     MemoryMaintenanceRun,
     UserMemoryBrief,
 )
@@ -40,6 +41,8 @@ DAILY_EXTRACT_LIMIT = 24
 DAILY_MAINTENANCE_LLM_LIMIT = 4
 MICROBATCH_MAX_EVENTS = 8
 MICROBATCH_WAIT = timedelta(minutes=15)
+MAINTENANCE_STATES = {"active", "shadow", "paused_automatically", "paused_manually", "recovering"}
+HIGH_RISK_ACTIONS = {"merge", "supersede", "expire", "compact", "purge", "rewrite"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +59,251 @@ class MemoryOperationsCoordinator:
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+
+    async def get_control(self, user_id: str) -> MemoryMaintenanceControl:
+        control = await self.db.scalar(
+            select(MemoryMaintenanceControl).where(MemoryMaintenanceControl.user_id == user_id)
+        )
+        if control is None:
+            control = MemoryMaintenanceControl(
+                id=generate_id("mmc"),
+                user_id=user_id,
+                state="active",
+                transition_metadata={"policy_version": "memory-operations-v2.5.1"},
+            )
+            self.db.add(control)
+            await self.db.flush()
+        return control
+
+    async def pause_control(
+        self,
+        user_id: str,
+        *,
+        reason: str,
+        error_code: str | None = None,
+        manual: bool = False,
+        integrity_fault: bool = False,
+        actor: str = "system",
+    ) -> MemoryMaintenanceControl:
+        control = await self.get_control(user_id)
+        now = datetime.now(UTC)
+        control.state = "paused_manually" if manual else "paused_automatically"
+        control.pause_reason = reason[:256]
+        control.last_error_code = (error_code or reason)[:128]
+        control.integrity_fault = bool(integrity_fault)
+        control.paused_at = now
+        control.shadow_passes = 0
+        control.transition_metadata = {
+            **dict(control.transition_metadata or {}),
+            "last_actor": actor[:64],
+            "last_transition": control.state,
+            "last_transition_at": now.isoformat(),
+        }
+        await self.db.flush()
+        return control
+
+    async def request_resume(
+        self,
+        user_id: str,
+        *,
+        actor: str,
+        reason: str,
+    ) -> MemoryMaintenanceControl:
+        control = await self.get_control(user_id)
+        control.state = "recovering"
+        control.pause_reason = None
+        control.last_error_code = None
+        control.shadow_passes = 0
+        control.transition_metadata = {
+            **dict(control.transition_metadata or {}),
+            "resume_requested_by": actor[:64],
+            "resume_reason": reason[:256],
+            "resume_requested_at": datetime.now(UTC).isoformat(),
+        }
+        await self.db.flush()
+        return control
+
+    async def apply_quality_report(
+        self,
+        user_id: str,
+        *,
+        metrics: dict[str, Any],
+        report_id: str,
+    ) -> MemoryMaintenanceControl:
+        """Persist anonymous aggregate metrics and fail closed on safety regression."""
+        safe = (
+            float(metrics.get("source_coverage") or 0.0) >= 0.99
+            and float(metrics.get("wrong_merge_rate") or 0.0) <= 0.02
+            and float(metrics.get("assistant_fact_leak_rate") or 0.0) == 0.0
+            and float(metrics.get("cleanup_safety_rate") or 0.0) >= 1.0
+        )
+        key = hashlib.sha256(f"v2.5.1:quality:{user_id}:{report_id}".encode("utf-8")).hexdigest()
+        existing = await self.db.scalar(
+            select(MemoryMaintenanceAction).where(MemoryMaintenanceAction.idempotency_key == key)
+        )
+        if existing is None:
+            run = MemoryMaintenanceRun(
+                id=generate_id("mmr"),
+                user_id=user_id,
+                kind="quality",
+                state="completed" if safe else "failed",
+                idempotency_key=key,
+                cursor={},
+                counters={"quality_gate_passed": int(safe)},
+                token_budget=0,
+                token_used=0,
+                error=None if safe else "quality_regression",
+                finished_at=datetime.now(UTC),
+            )
+            self.db.add(run)
+            await self.db.flush()
+            await self._record_action(
+                run,
+                user_id,
+                "quality_gate",
+                "completed" if safe else "failed",
+                [],
+                [],
+                "quality_gate_passed" if safe else "quality_regression",
+                key,
+                details={
+                    "schema": str(metrics.get("schema") or "conversation-quality/v2.5.1"),
+                    "report_id": report_id[:96],
+                    "metrics": metrics,
+                },
+                reversible=False,
+            )
+        if not safe:
+            return await self.pause_control(
+                user_id,
+                reason="offline_quality_regression",
+                error_code="quality_gate",
+                actor="quality_evaluator",
+            )
+        return await self.get_control(user_id)
+
+    async def _validate_integrity(self, user_id: str) -> tuple[bool, dict[str, Any]]:
+        active = list(
+            (
+                await self.db.execute(
+                    select(CommittedMemory.id)
+                    .where(
+                        CommittedMemory.user_id == user_id,
+                        CommittedMemory.status == CommittedStatus.ACTIVE,
+                        CommittedMemory.origin_kind != "legacy",
+                    )
+                    .limit(10000)
+                )
+            ).scalars()
+        )
+        covered: set[str] = set()
+        cross_user = 0
+        if active:
+            sources = list(
+                (
+                    await self.db.execute(
+                        select(
+                            MemorySource.memory_id,
+                            RawEvent.user_id,
+                            EvidenceSeal.user_id,
+                        )
+                        .outerjoin(RawEvent, RawEvent.id == MemorySource.raw_event_id)
+                        .outerjoin(EvidenceSeal, EvidenceSeal.id == MemorySource.evidence_seal_id)
+                        .where(MemorySource.memory_id.in_(active))
+                    )
+                ).all()
+            )
+            for memory_id, event_owner, seal_owner in sources:
+                source_owner = event_owner or seal_owner
+                if source_owner == user_id:
+                    covered.add(memory_id)
+                elif source_owner is not None:
+                    cross_user += 1
+        coverage = 1.0 if not active else len(covered) / len(active)
+        details = {
+            "active_working_memories": len(active),
+            "covered_memories": len(covered),
+            "source_coverage": round(coverage, 4),
+            "cross_user_sources": cross_user,
+        }
+        return cross_user == 0 and coverage >= 0.99, details
+
+    async def _evaluate_circuit_breaker(self, user_id: str) -> MemoryMaintenanceControl:
+        control = await self.get_control(user_id)
+        if control.state in {"paused_manually", "paused_automatically"}:
+            return control
+        valid, integrity = await self._validate_integrity(user_id)
+        if not valid:
+            return await self.pause_control(
+                user_id,
+                reason="memory_source_integrity_failed",
+                error_code="source_integrity",
+                integrity_fault=True,
+                actor="circuit_breaker",
+            )
+
+        recent_runs = list(
+            (
+                await self.db.execute(
+                    select(MemoryMaintenanceRun.state)
+                    .where(MemoryMaintenanceRun.user_id == user_id)
+                    .order_by(MemoryMaintenanceRun.started_at.desc())
+                    .limit(20)
+                )
+            ).scalars()
+        )
+        if len(recent_runs) >= 5:
+            failure_rate = sum(1 for state in recent_runs if state == "failed") / len(recent_runs)
+            if failure_rate > 0.20:
+                return await self.pause_control(
+                    user_id,
+                    reason="maintenance_failure_rate_exceeded",
+                    error_code="failure_rate",
+                    actor="circuit_breaker",
+                )
+
+        recent_merges = list(
+            (
+                await self.db.execute(
+                    select(MemoryMaintenanceAction.state)
+                    .where(
+                        MemoryMaintenanceAction.user_id == user_id,
+                        MemoryMaintenanceAction.action == "merge",
+                    )
+                    .order_by(MemoryMaintenanceAction.created_at.desc())
+                    .limit(50)
+                )
+            ).scalars()
+        )
+        if len(recent_merges) >= 10:
+            rollback_rate = sum(1 for state in recent_merges if state == "rolled_back") / len(recent_merges)
+            if rollback_rate > 0.02:
+                return await self.pause_control(
+                    user_id,
+                    reason="automatic_merge_rollback_rate_exceeded",
+                    error_code="merge_quality_regression",
+                    actor="circuit_breaker",
+                )
+
+        if control.state == "recovering":
+            control.shadow_passes = int(control.shadow_passes or 0) + 1
+            control.transition_metadata = {
+                **dict(control.transition_metadata or {}),
+                "last_shadow_validation": integrity,
+                "last_shadow_validation_at": datetime.now(UTC).isoformat(),
+            }
+            if control.shadow_passes >= 1:
+                control.state = "active"
+                control.integrity_fault = False
+                control.resumed_at = datetime.now(UTC)
+        await self.db.flush()
+        return control
+
+    @staticmethod
+    def _write_allowed(control: MemoryMaintenanceControl, action: str) -> bool:
+        if action not in HIGH_RISK_ACTIONS:
+            return True
+        return control.state == "active"
 
     @staticmethod
     def classify_event(event: RawEvent) -> str:
@@ -210,17 +458,32 @@ class MemoryOperationsCoordinator:
             self.db.add(run)
             await self.db.flush()
 
-        counters = {"merged": 0, "sealed": 0, "purged": 0, "briefs": 0, "expired": 0, "held": 0}
+        counters = {
+            "merged": 0,
+            "sealed": 0,
+            "purged": 0,
+            "briefs": 0,
+            "expired": 0,
+            "held": 0,
+            "paused_users": 0,
+            "shadow_users": 0,
+        }
         try:
             users = [user_id] if user_id else await self._maintenance_users()
             for owner in users:
                 if not owner:
                     continue
-                merge_stats = await self._merge_safe_duplicates(run, owner, limit_per_user)
-                for name, value in merge_stats.items():
-                    counters[name] = counters.get(name, 0) + value
+                control = await self._evaluate_circuit_breaker(owner)
+                if control.state in {"paused_automatically", "paused_manually"}:
+                    counters["paused_users"] += 1
+                elif control.state in {"shadow", "recovering"}:
+                    counters["shadow_users"] += 1
+                if self._write_allowed(control, "merge"):
+                    merge_stats = await self._merge_safe_duplicates(run, owner, limit_per_user)
+                    for name, value in merge_stats.items():
+                        counters[name] = counters.get(name, 0) + value
                 counters["briefs"] += int(await self.refresh_user_brief(owner))
-                if kind in {"daily", "weekly", "retention"}:
+                if kind in {"daily", "weekly", "retention"} and self._write_allowed(control, "purge"):
                     retention = await self._apply_retention(run, owner, limit_per_user)
                     for name, value in retention.items():
                         counters[name] = counters.get(name, 0) + value
@@ -308,20 +571,60 @@ class MemoryOperationsCoordinator:
                     stats["held"] += 1
                     continue
             primary, secondary = self._choose_merge_primary(first, second)
-            await MemoryDeduplicator(self.db).merge(
-                primary.id, secondary.id, regenerate_embedding=False, expected_user_id=user_id
+            source_ids_before = set(
+                (
+                    await self.db.execute(
+                        select(MemorySource.id).where(MemorySource.memory_id == primary.id)
+                    )
+                ).scalars()
             )
-            self.db.add(MemoryRelation(
-                id=generate_id("mrel"), user_id=user_id, source_memory_id=secondary.id,
-                target_memory_id=primary.id, relation_type="duplicates",
-                reason="working_agent_auto_merge_v2.5", confidence=similarity,
-                valid_from=datetime.now(UTC),
-            ))
-            await self._record_action(
-                run, user_id, "merge", "completed", [primary.id, secondary.id], [],
+            relation_id = generate_id("mrel")
+            action = await self._record_action(
+                run,
+                user_id,
+                "merge",
+                "running",
+                [primary.id, secondary.id],
+                [],
                 "exact_duplicate" if similarity >= 0.96 else "model_confirmed_near_duplicate",
-                action_key, output_memory_id=primary.id,
+                action_key,
+                output_memory_id=primary.id,
+                details={
+                    "policy_version": "memory-operations-v2.5.1",
+                    "similarity": similarity,
+                    "primary_before": self._memory_snapshot(primary),
+                    "secondary_before": self._memory_snapshot(secondary),
+                    "relation_id": relation_id,
+                },
+                reversible=True,
             )
+            try:
+                await MemoryDeduplicator(self.db).merge(
+                    primary.id, secondary.id, regenerate_embedding=False, expected_user_id=user_id
+                )
+                self.db.add(MemoryRelation(
+                    id=relation_id, user_id=user_id, source_memory_id=secondary.id,
+                    target_memory_id=primary.id, relation_type="duplicates",
+                    reason="working_agent_auto_merge_v2.5.1", confidence=similarity,
+                    valid_from=datetime.now(UTC),
+                ))
+                await self.db.flush()
+                source_ids_after = set(
+                    (
+                        await self.db.execute(
+                            select(MemorySource.id).where(MemorySource.memory_id == primary.id)
+                        )
+                    ).scalars()
+                )
+                action.details = {
+                    **dict(action.details or {}),
+                    "copied_source_ids": sorted(source_ids_after - source_ids_before),
+                }
+                action.state = "completed"
+            except Exception as exc:
+                action.state = "failed"
+                action.details = {**dict(action.details or {}), "error_code": type(exc).__name__[:128]}
+                raise
             stats["merged"] += 1
         return stats
 
@@ -329,9 +632,7 @@ class MemoryOperationsCoordinator:
     def _merge_allowed(first: CommittedMemory | None, second: CommittedMemory | None) -> bool:
         if first is None or second is None or first.status != CommittedStatus.ACTIVE or second.status != CommittedStatus.ACTIVE:
             return False
-        if first.memory_type != second.memory_type or first.sensitivity != second.sensitivity:
-            return False
-        if first.visibility_scope != second.visibility_scope:
+        if not MemoryDeduplicator._same_merge_partition(first, second):
             return False
         if first.sensitivity.value in SENSITIVE_VALUES:
             return False
@@ -343,6 +644,18 @@ class MemoryOperationsCoordinator:
         first_score = (float(first.importance or 0), first.created_at or datetime.min.replace(tzinfo=UTC))
         second_score = (float(second.importance or 0), second.created_at or datetime.min.replace(tzinfo=UTC))
         return (first, second) if first_score >= second_score else (second, first)
+
+    @staticmethod
+    def _memory_snapshot(memory: CommittedMemory) -> dict[str, Any]:
+        return {
+            "id": memory.id,
+            "title": memory.title,
+            "body": memory.body,
+            "status": memory.status.value,
+            "revision": int(memory.revision or 1),
+            "valid_until": memory.valid_until.isoformat() if memory.valid_until else None,
+            "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
+        }
 
     async def _confirm_near_duplicate(self, run: MemoryMaintenanceRun, first: CommittedMemory, second: CommittedMemory) -> bool:
         if int(run.token_used or 0) + 400 > int(run.token_budget or 0):
@@ -466,17 +779,148 @@ class MemoryOperationsCoordinator:
         )
         return int(handoffs.rowcount or 0) + int(candidates.rowcount or 0)
 
+    async def rollback_action(
+        self,
+        *,
+        user_id: str,
+        action_id: str,
+        actor: str,
+        reason: str,
+    ) -> MemoryMaintenanceAction:
+        action = await self.db.scalar(
+            select(MemoryMaintenanceAction).where(
+                MemoryMaintenanceAction.id == action_id,
+                MemoryMaintenanceAction.user_id == user_id,
+            )
+        )
+        if action is None:
+            raise LookupError("maintenance_action_not_found")
+        if action.rolled_back_at is not None and action.rollback_action_id:
+            existing = await self.db.get(MemoryMaintenanceAction, action.rollback_action_id)
+            return existing or action
+        now = datetime.now(UTC)
+        if action.action not in {"merge", "supersede", "expire"}:
+            raise ValueError("maintenance_action_not_reversible")
+        rollback_deadline = action.reversible_until
+        if rollback_deadline is not None and rollback_deadline.tzinfo is None:
+            rollback_deadline = rollback_deadline.replace(tzinfo=UTC)
+        if rollback_deadline is None or rollback_deadline < now:
+            raise ValueError("maintenance_action_rollback_window_expired")
+
+        details = dict(action.details or {})
+        snapshots = [
+            item
+            for item in (
+                details.get("primary_before"),
+                details.get("secondary_before"),
+                *(details.get("before_memories") or []),
+            )
+            if isinstance(item, dict) and item.get("id")
+        ]
+        if not snapshots:
+            raise ValueError("maintenance_action_rollback_snapshot_missing")
+
+        restored: list[CommittedMemory] = []
+        for snapshot in snapshots:
+            memory = await self.db.scalar(
+                select(CommittedMemory).where(
+                    CommittedMemory.id == str(snapshot["id"]),
+                    CommittedMemory.user_id == user_id,
+                )
+            )
+            if memory is None:
+                raise ValueError("maintenance_action_memory_missing")
+            memory.title = str(snapshot.get("title") or memory.title)
+            memory.body = str(snapshot.get("body") or "")
+            memory.status = CommittedStatus(str(snapshot.get("status") or CommittedStatus.ACTIVE.value))
+            memory.revision = int(snapshot.get("revision") or memory.revision or 1)
+            valid_until = snapshot.get("valid_until")
+            memory.valid_until = datetime.fromisoformat(valid_until) if valid_until else None
+            memory.updated_at = now
+            restored.append(memory)
+
+        copied_source_ids = [str(item) for item in details.get("copied_source_ids") or []]
+        if copied_source_ids:
+            await self.db.execute(delete(MemorySource).where(MemorySource.id.in_(copied_source_ids)))
+        relation_id = details.get("relation_id")
+        if relation_id:
+            await self.db.execute(
+                delete(MemoryRelation).where(
+                    MemoryRelation.id == str(relation_id),
+                    MemoryRelation.user_id == user_id,
+                )
+            )
+
+        rollback_key = hashlib.sha256(f"v2.5.1:rollback:{user_id}:{action.id}".encode("utf-8")).hexdigest()
+        run = await self.db.scalar(
+            select(MemoryMaintenanceRun).where(MemoryMaintenanceRun.idempotency_key == rollback_key)
+        )
+        if run is None:
+            run = MemoryMaintenanceRun(
+                id=generate_id("mmr"),
+                user_id=user_id,
+                kind="rollback",
+                state="completed",
+                idempotency_key=rollback_key,
+                cursor={},
+                counters={"restored": len(restored)},
+                token_budget=0,
+                token_used=0,
+                finished_at=now,
+            )
+            self.db.add(run)
+            await self.db.flush()
+        rollback = await self._record_action(
+            run,
+            user_id,
+            "rollback",
+            "completed",
+            [item.id for item in restored],
+            [],
+            "operator_requested_rollback",
+            rollback_key,
+            output_memory_id=restored[0].id if restored else None,
+            details={
+                "original_action_id": action.id,
+                "actor": actor[:64],
+                "reason": reason[:256],
+                "restored_memory_ids": [item.id for item in restored],
+            },
+            reversible=False,
+        )
+        action.state = "rolled_back"
+        action.rolled_back_at = now
+        action.rollback_action_id = rollback.id
+        await self.db.flush()
+
+        deduplicator = MemoryDeduplicator(self.db)
+        from src.memory.services.graph_projection import queue_memory_projection
+
+        for memory in restored:
+            await deduplicator.regenerate_embedding(memory.id, memory.body)
+            await queue_memory_projection(self.db, memory)
+        await self.refresh_user_brief(user_id)
+        return rollback
+
     async def _record_action(
         self, run: MemoryMaintenanceRun, user_id: str, action: str, state: str,
         memory_ids: list[str], event_ids: list[str], reason: str, key: str,
         *, output_memory_id: str | None = None, evidence_seal_id: str | None = None,
-    ) -> None:
-        self.db.add(MemoryMaintenanceAction(
+        details: dict[str, Any] | None = None, reversible: bool | None = None,
+    ) -> MemoryMaintenanceAction:
+        row = MemoryMaintenanceAction(
             id=generate_id("mma"), run_id=run.id, user_id=user_id, action=action, state=state,
             input_memory_ids=memory_ids, input_event_ids=event_ids, output_memory_id=output_memory_id,
-            evidence_seal_id=evidence_seal_id, reason_code=reason, details={}, idempotency_key=key,
-            reversible_until=datetime.now(UTC) + timedelta(days=30) if action in {"merge", "supersede"} else None,
-        ))
+            evidence_seal_id=evidence_seal_id, reason_code=reason, details=details or {}, idempotency_key=key,
+            reversible_until=(
+                datetime.now(UTC) + timedelta(days=30)
+                if (reversible is True or (reversible is None and action in {"merge", "supersede", "expire"}))
+                else None
+            ),
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return row
 
     @staticmethod
     def _action_key(action: str, user_id: str, memory_ids: Iterable[str], suffix: str) -> str:
