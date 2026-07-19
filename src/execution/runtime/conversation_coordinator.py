@@ -94,7 +94,12 @@ class ConversationCoordinator:
         messages = await self.ledger.recent_messages(session_id=session.id)
         episodes = await self.ledger.recent_episodes(user_id=user_id)
         attention = await self.ledger.pending_attention(user_id=user_id)
-        context = self._render_context(episodes=episodes, attention=attention)
+        memory_brief = await self.ledger.memory_brief(user_id=user_id)
+        context = self._render_context(
+            episodes=episodes,
+            attention=attention,
+            memory_brief=memory_brief.content if memory_brief is not None else None,
+        )
 
         try:
             answer = await generate_conversational_answer(
@@ -163,8 +168,13 @@ class ConversationCoordinator:
         )
 
     @staticmethod
-    def _render_context(*, episodes, attention) -> str:
+    def _render_context(*, episodes, attention, memory_brief: str | None = None) -> str:
         sections: list[str] = []
+        if memory_brief:
+            sections.append(
+                "Working Agent 已治理的正式记忆（仅作背景，若不确定请自然确认）：\n"
+                + memory_brief[:4_000]
+            )
         if episodes:
             rendered_episodes = []
             for episode in episodes[:12]:

@@ -66,10 +66,11 @@ class MemoryWorkEvidence(Base):
     user_id = Column(String(64), nullable=False, index=True)
     raw_event_id = Column(
         String(64),
-        ForeignKey("raw_events.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("raw_events.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
+    evidence_seal_id = Column(String(64), ForeignKey("evidence_seals.id", ondelete="SET NULL"), nullable=True, index=True)
     source_turn_id = Column(String(64), nullable=True, index=True)
     episode_id = Column(String(64), nullable=True, index=True)
     quote = Column(Text, nullable=True)

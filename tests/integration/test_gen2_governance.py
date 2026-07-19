@@ -367,7 +367,7 @@ def test_merge_preserves_primary_memory_sources():
     asyncio.run(run())
 
 
-def test_rewrite_proposes_without_modifying():
+def test_rewriter_is_read_only_retired_without_modifying():
     async def run():
         await init_db()
         client = TestClient(app)
@@ -390,7 +390,8 @@ def test_rewrite_proposes_without_modifying():
             result = await rewriter.rewrite(user_id=user_id, target_types=None, max_clusters=20)
 
         assert result["applied"] is False
-        assert "proposals" in result
+        assert result["proposals"] == []
+        assert result["warnings"] == ["memory_rewriter_retired_use_working_agent"]
         assert "generated_at" in result
 
         after = {}
@@ -405,7 +406,7 @@ def test_rewrite_proposes_without_modifying():
     asyncio.run(run())
 
 
-def test_rewrite_proposals_have_required_fields(monkeypatch):
+def test_rewriter_does_not_call_a_model_or_generate_legacy_proposals(monkeypatch):
     async def run():
         await init_db()
         client = TestClient(app)
@@ -416,46 +417,20 @@ def test_rewrite_proposals_have_required_fields(monkeypatch):
         id_b = await seed_committed_memory(user_id, title="事实 B", body="B 的内容", memory_type=MemoryType.FACT)
         id_c = await seed_committed_memory(user_id, title="事实 C", body="C 的内容", memory_type=MemoryType.FACT)
 
-        class _ProposalProvider:
-            async def embed(self, text):
-                return None
-
-            async def generate(self, prompt, *a, **kw):
-                return (
-                    "{\n"
-                    "  \"proposals\": [\n"
-                    f"    {{\"action\": \"merge\", \"memory_ids\": [\"{id_a}\", \"{id_b}\"], \"reason\": \"two facts should be merged\", \"merged_draft\": \"merged body\", \"draft_body\": null, \"memory_id\": null}},\n"
-                    f"    {{\"action\": \"rewrite\", \"memory_id\": \"{id_c}\", \"reason\": \"clarify wording\", \"draft_body\": \"new body\", \"memory_ids\": null, \"merged_draft\": null}},\n"
-                    f"    {{\"action\": \"archive\", \"memory_id\": \"{id_b}\", \"reason\": \"no longer relevant\", \"memory_ids\": null, \"merged_draft\": null, \"draft_body\": null}}\n"
-                    "  ]\n"
-                    "}"
-                )
-
-        from src.memory.services import memory_rewriter as rewriter_module
         from src.memory.services.memory_rewriter import MemoryRewriter
-
-        monkeypatch.setattr(rewriter_module, "get_llm_provider", lambda *a, **kw: _ProposalProvider())
 
         async with async_session() as session:
             rewriter = MemoryRewriter(session)
             result = await rewriter.rewrite(user_id=user_id, target_types=None, max_clusters=20)
 
-        proposals = result.get("proposals") or []
-        assert proposals
-        for p in proposals:
-            assert p.get("action") in {"merge", "rewrite", "archive"}
-            assert p.get("reason")
-
-        actions = {p["action"] for p in proposals}
-        assert "merge" in actions
-        assert "rewrite" in actions
-        assert "archive" in actions
+        assert result["proposals"] == []
+        assert result["warnings"] == ["memory_rewriter_retired_use_working_agent"]
         await cleanup_user_data(user_id)
 
     asyncio.run(run())
 
 
-def test_apply_rewrite_increments_rewritten_count():
+def test_apply_rewrite_is_retired_and_does_not_mutate_memory():
     async def run():
         await init_db()
         client = TestClient(app)
@@ -471,13 +446,13 @@ def test_apply_rewrite_increments_rewritten_count():
             proposals = [{"action": "rewrite", "memory_id": target_id, "reason": "improve wording", "draft_body": "改写后的 body, 表达更清晰。"}]
             result = await rewriter.apply_proposals(user_id=user_id, proposals=proposals)
 
-        assert result["applied_count"] >= 1
-        assert result["failed"] == []
+        assert result["applied_count"] == 0
+        assert result["failed"] == [{"reason": "memory_rewriter_retired_use_working_agent"}]
 
         async with async_session() as session:
             mem = (await session.execute(select(CommittedMemory).where(CommittedMemory.id == target_id))).scalar_one()
         assert mem.status == CommittedStatus.ACTIVE
-        assert mem.body == "改写后的 body, 表达更清晰。"
+        assert mem.body == "原始 body"
         await cleanup_user_data(user_id)
 
     asyncio.run(run())
@@ -511,7 +486,7 @@ def test_rewriter_rejects_cross_user_relation_proposal():
                 }],
             )
             assert result["applied_count"] == 0
-            assert result["failed"][0]["reason"] == "relation_memories_not_owned"
+            assert result["failed"][0]["reason"] == "memory_rewriter_retired_use_working_agent"
 
         async with async_session() as session:
             count = await session.scalar(

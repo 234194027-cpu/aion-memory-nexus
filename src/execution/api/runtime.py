@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.execution.models.agent_runtime import AgentHandoff, AgentRun, AgentStep
 from src.execution.models.memory_work import MemoryWorkCase, MemoryWorkDecision, MemoryWorkEvidence
+from src.execution.models.memory_operations import EvidenceSeal, MemoryMaintenanceAction, MemoryMaintenanceRun, UserMemoryBrief
 from src.memory.models.committed_memory import CommittedMemory
 from src.memory.models.raw_event import ProcessingStatus, RawEvent
 from src.execution.schemas.runtime import (
@@ -234,6 +235,33 @@ async def working_status(
             RawEvent.processing_next_retry_at.is_not(None),
         )
     )
+    queued_event_count = await db.scalar(
+        select(func.count(RawEvent.id)).where(
+            RawEvent.user_id == user.id,
+            RawEvent.processing_status == ProcessingStatus.QUEUED,
+        )
+    )
+    maintenance_rows = (
+        await db.execute(
+            select(MemoryMaintenanceAction.action, func.count(MemoryMaintenanceAction.id))
+            .where(MemoryMaintenanceAction.user_id == user.id)
+            .group_by(MemoryMaintenanceAction.action)
+        )
+    ).all()
+    seal_count = await db.scalar(select(func.count(EvidenceSeal.id)).where(EvidenceSeal.user_id == user.id))
+    brief = await db.scalar(select(UserMemoryBrief).where(UserMemoryBrief.user_id == user.id))
+    maintenance_run_rows = (
+        await db.execute(
+            select(MemoryMaintenanceRun.state, func.count(MemoryMaintenanceRun.id))
+            .where(or_(MemoryMaintenanceRun.user_id == user.id, MemoryMaintenanceRun.user_id.is_(None)))
+            .group_by(MemoryMaintenanceRun.state)
+        )
+    ).all()
+    maintenance_token_used = await db.scalar(
+        select(func.coalesce(func.sum(MemoryMaintenanceRun.token_used), 0)).where(
+            or_(MemoryMaintenanceRun.user_id == user.id, MemoryMaintenanceRun.user_id.is_(None))
+        )
+    )
     recent_runs = list(
         (
             await db.execute(
@@ -255,13 +283,14 @@ async def working_status(
     ]
     counts = {str(status): int(count) for status, count in case_rows}
     return {
-        "ledger_version": "memory-case-v2.4",
+        "ledger_version": "memory-operations-v2.5",
         "case_counts": counts,
         "active_backlog": sum(
             counts.get(status, 0)
             for status in ("open", "awaiting_evidence", "ready_to_commit", "conflict_review", "failed")
         ),
         "waiting_for_evidence": counts.get("awaiting_evidence", 0),
+        "queue_backlog": int(queued_event_count or 0),
         "failed_event_count": int(failed_events or 0),
         "retryable_failed_event_count": int(retryable_failed_events or 0),
         "decision_count": int(decision_count or 0),
@@ -270,6 +299,15 @@ async def working_status(
         if durations_ms
         else None,
         "autonomous_memory_enabled": True,
+        "maintenance_actions": {str(action): int(count) for action, count in maintenance_rows},
+        "maintenance_runs": {str(state): int(count) for state, count in maintenance_run_rows},
+        "maintenance_token_used": int(maintenance_token_used or 0),
+        "evidence_seal_count": int(seal_count or 0),
+        "memory_brief": {
+            "generated_at": brief.generated_at if brief is not None else None,
+            "memory_count": len(brief.memory_ids or []) if brief is not None else 0,
+            "token_estimate": brief.token_estimate if brief is not None else 0,
+        },
         "shared_cognition": {
             "formal_memory_retrieval": True,
             "document_source_search": True,
@@ -390,6 +428,7 @@ async def get_working_case(
             {
                 "id": item.id,
                 "raw_event_id": item.raw_event_id,
+                "evidence_seal_id": item.evidence_seal_id,
                 "source_turn_id": item.source_turn_id,
                 "episode_id": item.episode_id,
                 "quote": item.quote,

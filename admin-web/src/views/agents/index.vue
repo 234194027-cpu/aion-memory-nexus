@@ -14,12 +14,13 @@
     <el-card class="runtime-card" v-loading="runtimeLoading">
       <template #header>
         <div class="section-title">
-        <h3>双 Agent V2.4</h3>
+        <h3>双 Agent V2.5</h3>
           <el-tag type="success">自主记忆治理</el-tag>
         </div>
       </template>
       <dl class="runtime-grid">
         <div><dt>活跃案件</dt><dd>{{ workingStatus?.active_backlog ?? '-' }}</dd></div>
+        <div><dt>队列积压</dt><dd>{{ workingStatus?.queue_backlog ?? '-' }}</dd></div>
         <div><dt>等待补证</dt><dd>{{ workingStatus?.waiting_for_evidence ?? '-' }}</dd></div>
         <div><dt>治理决策</dt><dd>{{ workingStatus?.decision_count ?? '-' }}</dd></div>
         <div><dt>自动记忆</dt><dd>{{ workingStatus?.automatic_memory_count ?? '-' }}</dd></div>
@@ -27,8 +28,12 @@
         <div><dt>待重试</dt><dd>{{ workingStatus?.retryable_failed_event_count ?? '-' }}</dd></div>
         <div><dt>平均处理</dt><dd>{{ formatDuration(workingStatus?.average_processing_ms) }}</dd></div>
         <div><dt>正式写入</dt><dd>工作 Agent 自动治理</dd></div>
-        <div><dt>正式记忆摘要</dt><dd>{{ workingStatus?.conversation_memory_projection?.item_count ?? '-' }} 条</dd></div>
-        <div><dt>摘要刷新</dt><dd>{{ formatTime(workingStatus?.conversation_memory_projection?.projected_at) }}</dd></div>
+        <div><dt>正式记忆摘要</dt><dd>{{ workingStatus?.memory_brief?.memory_count ?? '-' }} 条</dd></div>
+        <div><dt>摘要刷新</dt><dd>{{ formatTime(workingStatus?.memory_brief?.generated_at) }}</dd></div>
+        <div><dt>证据封存</dt><dd>{{ workingStatus?.evidence_seal_count ?? '-' }}</dd></div>
+        <div><dt>自动合并</dt><dd>{{ workingStatus?.maintenance_actions?.merge ?? 0 }}</dd></div>
+        <div><dt>来源清理</dt><dd>{{ (workingStatus?.maintenance_actions?.compact ?? 0) + (workingStatus?.maintenance_actions?.purge ?? 0) }}</dd></div>
+        <div><dt>维护 Token</dt><dd>{{ workingStatus?.maintenance_token_used ?? 0 }}</dd></div>
         <div><dt>文档来源检索</dt><dd>{{ workingStatus?.shared_cognition?.document_source_search ? '已启用' : '未启用' }}</dd></div>
         <div><dt>未确认线索</dt><dd>{{ workingStatus?.shared_cognition?.unconfirmed_clue_search ? '仅限澄清' : '未启用' }}</dd></div>
       </dl>

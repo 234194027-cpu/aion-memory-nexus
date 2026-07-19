@@ -1,7 +1,7 @@
 {
   "name": "admin-web",
   "private": true,
-  "version": "2.4.2",
+  "version": "2.5.0",
   "type": "module",
   "packageManager": "npm@10.9.2",
   "engines": {

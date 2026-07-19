@@ -8,7 +8,7 @@ import logging
 from src.memory.services.memory_rewriter import MemoryRewriter
 
 
-def test_rewriter_failure_log_omits_proposal_content(caplog) -> None:
+def test_rewriter_is_retired_without_inspecting_proposal_content(caplog) -> None:
     secret = "private-memory-content-must-not-reach-logs"
 
     class StubSession:
@@ -23,6 +23,6 @@ def test_rewriter_failure_log_omits_proposal_content(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="src.memory.services.memory_rewriter"):
         result = asyncio.run(MemoryRewriter(StubSession()).apply_proposals("user-1", [proposal]))
 
-    assert result["failed"][0]["reason"] == "unreadable proposal"
+    assert result["failed"][0]["reason"] == "memory_rewriter_retired_use_working_agent"
     assert secret not in caplog.text
-    assert "action=unknown error_type=ValueError" in caplog.text
+    assert caplog.text == ""

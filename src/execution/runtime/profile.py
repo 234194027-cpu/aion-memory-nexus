@@ -67,11 +67,13 @@ WORKING_PROFILE = AgentProfileSpec(
         "request_evidence",
         "close_memory_case",
     }),
-    max_steps=12,
-    max_model_calls=12,
-    max_tool_calls=20,
-    max_wall_time_seconds=120,
-    max_total_tokens=48_000,
+    # Ingestion is single-pass; persistence and policy checks are deterministic
+    # services and must not be paid for through an unbounded model loop.
+    max_steps=4,
+    max_model_calls=1,
+    max_tool_calls=8,
+    max_wall_time_seconds=45,
+    max_total_tokens=8_000,
     max_cost=None,
     may_reply_to_user=False,
     may_propose_memory=True,

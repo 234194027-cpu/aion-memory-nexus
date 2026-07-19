@@ -141,7 +141,10 @@ class MemoryDeduplicator:
 
         返回 primary_memory_id。
         """
-        async with self.db.begin():
+        # Callers often perform ownership/retrieval checks first, which opens
+        # SQLAlchemy's implicit transaction.  A savepoint keeps the merge
+        # atomic without requiring a separate direct-write pathway.
+        async with self.db.begin_nested():
             primary = await self._load_memory(primary_memory_id)
             secondary = await self._load_memory(secondary_memory_id)
 

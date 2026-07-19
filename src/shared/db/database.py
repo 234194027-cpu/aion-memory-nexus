@@ -92,6 +92,7 @@ def _import_all_models() -> None:
         ConversationTurn,
     )
     from src.execution.models.memory_work import MemoryWorkCase, MemoryWorkDecision, MemoryWorkEvidence  # noqa: F401
+    from src.execution.models.memory_operations import EvidenceSeal, MemoryMaintenanceAction, MemoryMaintenanceRun, UserMemoryBrief  # noqa: F401
     from src.execution.models.audit_log import AuditLog  # noqa: F401
     from src.execution.models.custom_llm_provider import CustomLLMProvider  # noqa: F401
     from src.execution.models.life_task import LifeTask  # noqa: F401

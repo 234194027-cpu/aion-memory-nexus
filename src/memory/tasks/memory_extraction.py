@@ -157,11 +157,20 @@ async def _process_memory_event(event_id: str):
                 "event_metadata": event.event_metadata or {},
             }
 
-            from src.execution.runtime.working_agent import run_working_active
+            from src.execution.services.memory_operations import MemoryOperationsCoordinator
 
-            active_result = await run_working_active(session, raw_event=raw_event)
-            if active_result is None:
-                raise RuntimeError("v2_working_agent_unavailable")
+            active_result = await MemoryOperationsCoordinator(session).process_event(event)
+
+            if active_result.state == "DEFERRED":
+                event.processing_status = ProcessingStatus.QUEUED
+                event.processing_started_at = None
+                event.processing_heartbeat_at = datetime.now(timezone.utc)
+                event.processing_next_retry_at = active_result.deferred_until
+                event.processing_error = None
+                event.processing_result = "waiting_microbatch"
+                event.processing_attempts = max(0, int(event.processing_attempts or 1) - 1)
+                await session.commit()
+                return
 
             episode_id = (event.event_metadata or {}).get("episode_id")
             if isinstance(episode_id, str) and episode_id:
@@ -169,7 +178,7 @@ async def _process_memory_event(event_id: str):
 
                 episode = await session.get(ConversationEpisode, episode_id)
                 if episode is not None and episode.user_id == event.user_id:
-                    episode.working_state = active_result.state.value.lower()
+                    episode.working_state = active_result.state.lower()
                     if active_result.handoff_id:
                         episode.handoff_ids = list(
                             dict.fromkeys(
@@ -183,7 +192,7 @@ async def _process_memory_event(event_id: str):
                             continue
                         item = dict(signal)
                         if item.get("raw_event_id") == event.id:
-                            item["working_state"] = active_result.state.value.lower()
+                            item["working_state"] = active_result.state.lower()
                             item["memory_ids"] = list(active_result.memory_ids)
                             item["handoff_id"] = active_result.handoff_id
                         updated_signals.append(item)
@@ -193,7 +202,26 @@ async def _process_memory_event(event_id: str):
             event.processing_started_at = None
             event.processing_heartbeat_at = datetime.now(timezone.utc)
             event.processing_error = None
-            event.processing_result = active_result.state.value.lower()
+            event.processing_result = active_result.state.lower()
+            batch_event_ids = (event.event_metadata or {}).get("batch_source_event_ids")
+            if isinstance(batch_event_ids, list):
+                secondary_ids = [str(item) for item in batch_event_ids if isinstance(item, str) and item != event.id]
+                if secondary_ids:
+                    await session.execute(
+                        RawEvent.__table__.update()
+                        .where(
+                            RawEvent.id.in_(secondary_ids),
+                            RawEvent.user_id == event.user_id,
+                            RawEvent.processing_status.in_((ProcessingStatus.QUEUED, ProcessingStatus.PROCESSING)),
+                        )
+                        .values(
+                            processing_status=ProcessingStatus.COMPLETED,
+                            processing_started_at=None,
+                            processing_heartbeat_at=datetime.now(timezone.utc),
+                            processing_error=None,
+                            processing_result=f"batched_{active_result.state.lower()}",
+                        )
+                    )
             # External-agent events remain traceable in RawEvent/WorkCase but
             # must not become Graphiti extraction input.  Only a later governed
             # CommittedMemory may enter the derived graph.
@@ -230,12 +258,12 @@ async def _process_memory_event(event_id: str):
             for memory_id in active_result.memory_ids:
                 schedule_embedding_generation(memory_id)
             if active_result.memory_ids:
-                from src.execution.services.conversation_memory_projector import (
-                    try_refresh_conversation_memory_projection,
-                )
-
-                await try_refresh_conversation_memory_projection(
-                    session, user_id=event.user_id
+                # A successful governed write must immediately refresh the
+                # Conversation Agent's formal-memory brief and its workspace
+                # projection.  The brief itself contains only formal IDs and
+                # never turns an Agent assertion into a user fact.
+                await MemoryOperationsCoordinator(session).refresh_user_brief(
+                    event.user_id
                 )
             runtime_metrics.record_task("memory_extraction")
 

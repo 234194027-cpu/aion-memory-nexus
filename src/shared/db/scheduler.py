@@ -28,6 +28,7 @@ _leader_lock_connection = None
 AGENT_CONTROLLED_JOB_IDS = (
     "scan_pending_events",
     "daily_memory_organize",
+    "weekly_memory_maintenance",
     "backfill_embeddings_init",
     "backfill_embeddings_daily",
 )
@@ -88,7 +89,7 @@ def start_scheduler() -> bool:
     
     scheduler.add_job(
         scan_pending_events,
-        IntervalTrigger(minutes=5),
+        IntervalTrigger(minutes=1),
         id="scan_pending_events",
         replace_existing=True,
         max_instances=1,
@@ -96,7 +97,7 @@ def start_scheduler() -> bool:
     
     scheduler.add_job(
         daily_memory_organize,
-        CronTrigger(hour=2, minute=0, timezone="Asia/Shanghai"),
+        CronTrigger(hour=2, minute=10, timezone="Asia/Shanghai"),
         id="daily_memory_organize",
         replace_existing=True,
         max_instances=1,
@@ -112,7 +113,7 @@ def start_scheduler() -> bool:
 
     scheduler.add_job(
         working_memory_commit_compensation,
-        IntervalTrigger(minutes=10),
+        IntervalTrigger(minutes=5),
         id="working_memory_commit_compensation",
         replace_existing=True,
         max_instances=1,
@@ -138,6 +139,13 @@ def start_scheduler() -> bool:
         conversation_memory_projection,
         IntervalTrigger(minutes=60),
         id="conversation_memory_projection",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        weekly_memory_maintenance,
+        CronTrigger(day_of_week="sun", hour=3, minute=10, timezone="Asia/Shanghai"),
+        id="weekly_memory_maintenance",
         replace_existing=True,
         max_instances=1,
     )
@@ -214,14 +222,21 @@ async def _update_scheduler_async():
             scheduler.resume_job("scan_pending_events")
             scheduler.reschedule_job(
                 "scan_pending_events",
-                trigger=IntervalTrigger(minutes=max(1, agent.event_extraction_interval))
+                trigger=IntervalTrigger(minutes=1)
             )
         
         if scheduler.get_job("daily_memory_organize"):
             scheduler.resume_job("daily_memory_organize")
             scheduler.reschedule_job(
                 "daily_memory_organize",
-                trigger=CronTrigger(hour=max(0, min(23, agent.memory_organize_hour)), minute=0, timezone="Asia/Shanghai")
+                trigger=CronTrigger(hour=2, minute=10, timezone="Asia/Shanghai")
+            )
+
+        if scheduler.get_job("weekly_memory_maintenance"):
+            scheduler.resume_job("weekly_memory_maintenance")
+            scheduler.reschedule_job(
+                "weekly_memory_maintenance",
+                trigger=CronTrigger(day_of_week="sun", hour=3, minute=10, timezone="Asia/Shanghai"),
             )
         
         logger.info(
@@ -371,38 +386,28 @@ async def recover_graph_projection_outbox():
 
 @run_async
 async def daily_memory_organize():
-    from src.memory.tasks.memory_hygiene import run_nightly_hygiene
+    from src.execution.services.memory_operations import MemoryOperationsCoordinator
 
-    logger.info("[Scheduler] Running daily memory organize...")
+    logger.info("[Scheduler] Running Working-Agent daily maintenance...")
     async with async_session() as session:
         if not await has_enabled_scheduler_agent(session):
             return
-        result = await session.execute(
-            select(AgentProfile.user_id)
-            .where(AgentProfile.status.is_(True))
-            .where(AgentProfile.schedule_enabled.is_(True))
-        )
-        user_ids = sorted({row[0] for row in result.all() if row[0]})
+        result = await MemoryOperationsCoordinator(session).run_maintenance(kind="daily")
+        await session.commit()
+    logger.info("[Scheduler] Working-Agent daily maintenance completed: %s", result)
 
-        summaries = []
-        for user_id in user_ids:
-            try:
-                report = await run_nightly_hygiene(session, user_id)
-                from src.execution.runtime.learning_review import build_working_quality_snapshot
 
-                working_quality = await build_working_quality_snapshot(session, user_id=user_id)
-                summaries.append(
-                    {
-                        "user_id": user_id,
-                        "stats": report.get("stats", {}),
-                        "suggestion_count": len(report.get("hygiene_suggestions", [])),
-                        "working_quality": working_quality,
-                    }
-                )
-            except Exception as exc:
-                logger.error("[Scheduler] Daily memory organize failed for user %s: %s", user_id, exc)
+@run_async
+async def weekly_memory_maintenance():
+    """Deep but budgeted consolidation; it never deletes formal memory."""
+    from src.execution.services.memory_operations import MemoryOperationsCoordinator
 
-    logger.info("[Scheduler] Daily memory organize completed: %s", summaries)
+    async with async_session() as session:
+        if not await has_enabled_scheduler_agent(session):
+            return
+        result = await MemoryOperationsCoordinator(session).run_maintenance(kind="weekly", limit_per_user=100)
+        await session.commit()
+    logger.info("[Scheduler] Working-Agent weekly maintenance completed: %s", result)
 
 @run_async
 async def weekly_summary():

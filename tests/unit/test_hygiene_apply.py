@@ -17,7 +17,7 @@ from src.shared.ids.id_generator import generate_memory_id
 from src.shared.security.auth import get_password_hash
 
 
-def test_hygiene_apply_requires_approval_and_can_merge():
+def test_hygiene_apply_is_retired_and_never_mutates_formal_memory():
     async def run():
         await init_db()
         suffix = uuid4().hex
@@ -60,33 +60,25 @@ def test_hygiene_apply_requires_approval_and_can_merge():
                 auto_apply=True,
             )
 
-            with pytest.raises(HTTPException) as denied:
+            with pytest.raises(HTTPException) as retired:
                 await apply_hygiene_suggestions(
-                    request=HygieneApplyRequest(suggestions=[suggestion]),
+                    request=HygieneApplyRequest(suggestions=[suggestion], approved=True),
                     db=db,
                     user=user,
                 )
-            assert denied.value.status_code == 400
-
-            result = await apply_hygiene_suggestions(
-                request=HygieneApplyRequest(suggestions=[suggestion], approved=True),
-                db=db,
-                user=user,
-            )
-            assert result.applied_count == 1
-            assert result.failed == []
+            assert retired.value.status_code == 410
 
             secondary = (
                 await db.execute(
                     select(CommittedMemory).where(CommittedMemory.id == secondary_id)
                 )
             ).scalar_one()
-            assert secondary.status == CommittedStatus.SUPERSEDED
+            assert secondary.status == CommittedStatus.ACTIVE
 
     asyncio.run(run())
 
 
-def test_hygiene_apply_reports_unsupported_without_writing():
+def test_hygiene_apply_reports_retired_without_writing():
     async def run():
         await init_db()
         suffix = uuid4().hex
@@ -99,24 +91,22 @@ def test_hygiene_apply_reports_unsupported_without_writing():
             db.add(user)
             await db.commit()
 
-            result = await apply_hygiene_suggestions(
-                request=HygieneApplyRequest(
-                    approved=True,
-                    suggestions=[
-                        HygieneSuggestion(
-                            type="review_low_confidence_memory",
-                            priority="low",
-                            memory_ids=["missing"],
-                            reason="confidence_below_threshold",
-                        )
-                    ],
-                ),
-                db=db,
-                user=user,
-            )
-
-        assert result.applied_count == 0
-        assert result.failed == []
-        assert result.unsupported[0]["type"] == "review_low_confidence_memory"
+            with pytest.raises(HTTPException) as retired:
+                await apply_hygiene_suggestions(
+                    request=HygieneApplyRequest(
+                        approved=True,
+                        suggestions=[
+                            HygieneSuggestion(
+                                type="review_low_confidence_memory",
+                                priority="low",
+                                memory_ids=["missing"],
+                                reason="confidence_below_threshold",
+                            )
+                        ],
+                    ),
+                    db=db,
+                    user=user,
+                )
+            assert retired.value.status_code == 410
 
     asyncio.run(run())

@@ -146,7 +146,10 @@ async def merge_duplicates(
     db: AsyncSession = Depends(get_db),
     user = Depends(get_current_user),
 ):
-    """合并两条 memory: secondary 标记 SUPERSEDED, primary body 替换。"""
+    """Retired: Working Agent is the only formal-memory mutation boundary."""
+    raise HTTPException(status_code=410, detail="manual_memory_mutation_retired_use_working_agent")
+    # Legacy implementation intentionally left below during the 2.5 migration
+    # window for source-history readability; it is unreachable.
     if request.primary_memory_id == request.secondary_memory_id:
         raise HTTPException(status_code=400, detail="primary and secondary must be different")
 
@@ -189,7 +192,8 @@ async def run_rewriter(
     db: AsyncSession = Depends(get_db),
     user = Depends(get_current_user),
 ):
-    """生成 rewrite proposals。``dry_run=True`` (默认) 不写库, 只返回结构。"""
+    """Retired with the candidate/review workflow."""
+    raise HTTPException(status_code=410, detail="memory_rewriter_retired_use_working_agent")
     rewriter = MemoryRewriter(db)
     result = await rewriter.rewrite(
         user_id=user.id,
@@ -231,7 +235,8 @@ async def apply_rewriter(
     db: AsyncSession = Depends(get_db),
     user = Depends(get_current_user),
 ):
-    """应用审核过的 rewrite proposals。"""
+    """Retired with the candidate/review workflow."""
+    raise HTTPException(status_code=410, detail="memory_rewriter_retired_use_working_agent")
     rewriter = MemoryRewriter(db)
     result = await rewriter.apply_proposals(
         user_id=user.id,
@@ -257,7 +262,8 @@ async def run_hygiene_review(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Run suggestion-only memory hygiene for the current user."""
+    """Retired: maintenance is a scheduled Working-Agent operation."""
+    raise HTTPException(status_code=410, detail="manual_hygiene_retired_use_working_agent")
     result = await run_nightly_hygiene(
         db,
         user.id,
@@ -283,7 +289,8 @@ async def apply_hygiene_suggestions(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Apply explicitly approved hygiene suggestions through MemoryRewriter."""
+    """Retired with the candidate/review workflow."""
+    raise HTTPException(status_code=410, detail="manual_hygiene_retired_use_working_agent")
     if not request.approved:
         raise HTTPException(status_code=400, detail="hygiene_apply_requires_approval")
 

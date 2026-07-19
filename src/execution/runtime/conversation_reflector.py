@@ -515,6 +515,19 @@ async def reflect_session(session_id: str, *, force: bool = False) -> str | None
                     )
                 )
 
+            # Multiple durable signals from one Episode share a single
+            # Working-Agent invocation, while retaining each RawEvent as
+            # independent provenance evidence.
+            if event_ids:
+                primary_event = await db.get(RawEvent, event_ids[0])
+                if primary_event is not None:
+                    primary_metadata = dict(primary_event.event_metadata or {})
+                    # WorkingCoordinator handles at most one eight-event micro-batch.
+                    # Remaining signals stay queued for their own grounded pass.
+                    primary_metadata["batch_source_event_ids"] = event_ids[:8]
+                    primary_metadata["batch_kind"] = "conversation_episode"
+                    primary_event.event_metadata = primary_metadata
+
             for turn in turns:
                 turn.reflection_state = "reflected"
             cursor.running = False
@@ -542,9 +555,7 @@ async def reflect_session(session_id: str, *, force: bool = False) -> str | None
 
             if event_ids:
                 from src.memory.tasks.memory_extraction import trigger_extraction
-
-                for event_id in event_ids:
-                    trigger_extraction(event_id)
+                trigger_extraction(event_ids[0])
             return episode.id
         except Exception as exc:
             await db.rollback()

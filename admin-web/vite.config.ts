@@ -16,7 +16,10 @@ export default defineConfig({
   // 构建产物直接输出到项目根目录的 static/，与 Dockerfile 中 `COPY static/ /app/static/` 对齐
   build: {
     outDir: resolve(__dirname, '../static'),
-    emptyOutDir: true
+    // ``static/`` also holds versioned skill packages served by the backend.
+    // Emptying the shared directory during an admin build silently removes
+    // those packages, so Vite may replace only generated assets here.
+    emptyOutDir: false
   },
   server: {
     port: 5173,

@@ -72,3 +72,5 @@ class RawEvent(Base):
     processing_attempts = Column(Integer, nullable=False, default=0, server_default="0")
     processing_error = Column(String(128), nullable=True)
     processing_result = Column(String(64), nullable=True)
+    retention_state = Column(String(24), nullable=False, default="active", index=True)
+    purge_after = Column(DateTime(timezone=True), nullable=True, index=True)

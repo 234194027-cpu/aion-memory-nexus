@@ -136,7 +136,7 @@ async def run_working_shadow(
     )
     runtime = build_working_runtime(
         db,
-        model or JsonCompatibilityModel(get_llm_provider(), max_tokens=3072, role="working"),
+        model or JsonCompatibilityModel(get_llm_provider(), max_tokens=1200, role="working"),
         shadow=True,
     )
     result = await runtime.run(

@@ -58,7 +58,33 @@ class WorkingCoordinator:
         event = await self.db.scalar(select(RawEvent).where(RawEvent.id == raw_event_id))
         if event is None:
             return None
-        return await self.process_mapping(_event_mapping(event))
+        mapping = _event_mapping(event)
+        batch_ids = (event.event_metadata or {}).get("batch_source_event_ids")
+        if isinstance(batch_ids, list):
+            normalized = [str(item) for item in batch_ids if isinstance(item, str) and item][:8]
+            if normalized:
+                events = list((await self.db.execute(
+                    select(RawEvent).where(
+                        RawEvent.user_id == event.user_id,
+                        RawEvent.id.in_(normalized),
+                    )
+                )).scalars())
+                by_id = {item.id: item for item in events}
+                metadata = dict(mapping["metadata"])
+                metadata["batch_evidence"] = [
+                    {
+                        "id": item.id,
+                        "content": item.content[:2000],
+                        "occurred_at": item.occurred_at,
+                        "source_turn_id": (item.event_metadata or {}).get("source_turn_id"),
+                    }
+                    for event_id in normalized
+                    if (item := by_id.get(event_id)) is not None
+                ]
+                metadata["batch_source_event_ids"] = normalized
+                mapping["metadata"] = metadata
+                mapping["event_metadata"] = metadata
+        return await self.process_mapping(mapping)
 
     async def process_mapping(self, raw_event: Mapping[str, Any]) -> WorkingActiveResult | None:
         if not raw_event.get("id") or not raw_event.get("user_id") or not isinstance(raw_event.get("content"), str):
@@ -130,10 +156,16 @@ class WorkingCoordinator:
             self.db,
             raw_event=raw_event,
         )
+        batch_ids = _metadata(raw_event).get("batch_source_event_ids")
+        if isinstance(batch_ids, list):
+            source_event_ids = tuple(dict.fromkeys([
+                *source_event_ids,
+                *(str(item) for item in batch_ids if isinstance(item, str) and item),
+            ]))
         runtime = build_working_runtime(
             self.db,
             self.model
-            or JsonCompatibilityModel(get_llm_provider(), max_tokens=3072, role="working"),
+            or JsonCompatibilityModel(get_llm_provider(), max_tokens=1200, role="working"),
             shadow=False,
         )
         context = runtime.new_context(

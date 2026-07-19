@@ -16,6 +16,7 @@ from src.execution.models.conversation import (
     ConversationReflectionCursor,
     ConversationTurn,
 )
+from src.execution.models.memory_operations import UserMemoryBrief
 from src.shared.ids.id_generator import generate_id
 
 
@@ -285,6 +286,12 @@ class ConversationLedger:
                     .limit(max(1, min(limit, 50)))
                 )
             ).scalars()
+        )
+
+    async def memory_brief(self, *, user_id: str) -> UserMemoryBrief | None:
+        """Return the Working Agent's bounded formal-memory context pack."""
+        return await self.db.scalar(
+            select(UserMemoryBrief).where(UserMemoryBrief.user_id == user_id)
         )
 
     async def mark_inbound_response(
