@@ -131,8 +131,16 @@ def test_operator_drain_skips_wait_and_daily_budget_without_skipping_governance(
                     content_hash="operator-drain", sensitivity=SensitivityLevel.NORMAL,
                     visibility_scope=VisibilityScope.PERSONAL,
                     processing_status=ProcessingStatus.PROCESSING,
+                    event_metadata={"batch_source_event_ids": ["evt-operator-drain"]},
                 )
-                db.add(event)
+                peer = RawEvent(
+                    id="evt-operator-peer", user_id="u1", source_type=SourceType.MANUAL,
+                    occurred_at=datetime.now(timezone.utc), content="这是同批次的另一条记录。",
+                    content_hash="operator-peer", sensitivity=SensitivityLevel.NORMAL,
+                    visibility_scope=VisibilityScope.PERSONAL,
+                    processing_status=ProcessingStatus.QUEUED,
+                )
+                db.add_all([event, peer])
                 await db.flush()
 
                 async def budget_exhausted(*_args, **_kwargs):
@@ -160,7 +168,7 @@ def test_operator_drain_skips_wait_and_daily_budget_without_skipping_governance(
                     operator_drain=True,
                 )
                 assert result.state == "DISCARDED"
-                assert event.event_metadata["batch_source_event_ids"] == [event.id]
+                assert set(event.event_metadata["batch_source_event_ids"]) == {event.id, peer.id}
         finally:
             await engine.dispose()
 

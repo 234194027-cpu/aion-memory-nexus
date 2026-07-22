@@ -23,6 +23,7 @@ from src.shared.utils.runtime_metrics import runtime_metrics
 logger = logging.getLogger(__name__)
 PROCESSING_LEASE_SECONDS = 15 * 60
 MAX_PROCESSING_ATTEMPTS = 3
+FAST_DRAIN_LEASE_SECONDS = 90
 FAST_DRAIN_ACTIVE_STATES = ("queued", "running")
 
 @celery_app.task
@@ -420,7 +421,7 @@ async def create_fast_drain_run(session, *, user_id: str):
             if heartbeat is not None and heartbeat.tzinfo is None:
                 heartbeat = heartbeat.replace(tzinfo=timezone.utc)
         if heartbeat is not None and datetime.now(timezone.utc) - heartbeat <= timedelta(
-            seconds=PROCESSING_LEASE_SECONDS
+            seconds=FAST_DRAIN_LEASE_SECONDS
         ):
             return active, False
         active.state = "failed"
@@ -505,7 +506,7 @@ async def fast_drain_status(session, *, user_id: str) -> dict:
             if heartbeat is not None and heartbeat.tzinfo is None:
                 heartbeat = heartbeat.replace(tzinfo=timezone.utc)
         if heartbeat is None or datetime.now(timezone.utc) - heartbeat > timedelta(
-            seconds=PROCESSING_LEASE_SECONDS
+            seconds=FAST_DRAIN_LEASE_SECONDS
         ):
             active = False
             public_state = "stalled"

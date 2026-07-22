@@ -423,7 +423,7 @@ class MemoryOperationsCoordinator:
         """Hold ordinary ingress briefly, then process one source-grounded batch."""
         metadata = dict(event.event_metadata or {})
         existing = metadata.get("batch_source_event_ids")
-        if isinstance(existing, list) and event.id in existing:
+        if not force_ready and isinstance(existing, list) and event.id in existing:
             return True, None
 
         now = datetime.now(UTC)
