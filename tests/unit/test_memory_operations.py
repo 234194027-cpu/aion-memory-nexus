@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -113,6 +114,56 @@ def test_ordinary_event_waits_for_microbatch_without_working_model() -> None:
                 assert result.deferred_until is not None
         finally:
             await engine.dispose()
+    asyncio.run(run())
+
+
+def test_operator_drain_skips_wait_and_daily_budget_without_skipping_governance(monkeypatch) -> None:
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            async with factory() as db:
+                event = RawEvent(
+                    id="evt-operator-drain", user_id="u1", source_type=SourceType.MANUAL,
+                    occurred_at=datetime.now(timezone.utc), content="今天读完了一本书，感觉很有收获。",
+                    content_hash="operator-drain", sensitivity=SensitivityLevel.NORMAL,
+                    visibility_scope=VisibilityScope.PERSONAL,
+                    processing_status=ProcessingStatus.PROCESSING,
+                )
+                db.add(event)
+                await db.flush()
+
+                async def budget_exhausted(*_args, **_kwargs):
+                    raise AssertionError("operator drain must use its own durable run budget")
+
+                async def governed_working_agent(_db, *, raw_event):
+                    assert raw_event["id"] == event.id
+                    return SimpleNamespace(
+                        state=SimpleNamespace(value="DISCARDED"),
+                        memory_ids=(),
+                        handoff_id=None,
+                    )
+
+                monkeypatch.setattr(
+                    MemoryOperationsCoordinator,
+                    "_extract_budget_exhausted",
+                    budget_exhausted,
+                )
+                monkeypatch.setattr(
+                    "src.execution.runtime.working_coordinator.WorkingCoordinator.process",
+                    lambda *_args, **_kwargs: governed_working_agent(db, raw_event={"id": event.id}),
+                )
+                result = await MemoryOperationsCoordinator(db).process_event(
+                    event,
+                    operator_drain=True,
+                )
+                assert result.state == "DISCARDED"
+                assert event.event_metadata["batch_source_event_ids"] == [event.id]
+        finally:
+            await engine.dispose()
+
     asyncio.run(run())
 
 

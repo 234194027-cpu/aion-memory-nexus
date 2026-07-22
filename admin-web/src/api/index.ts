@@ -180,6 +180,8 @@ export const runtimeApi = {
   openLoops: () => api.get<{ items: OpenLoopItem[] }>('/runtime/open-loops') as any,
   maintenanceActions: (limit = 50) => api.get<any>('/runtime/working/maintenance/actions', { params: { limit } }) as any,
   maintenanceControl: () => api.get<any>('/runtime/working/maintenance/control') as any,
+  fastDrainStatus: () => api.get<any>('/runtime/working/queue/fast-drain') as any,
+  startFastDrain: () => api.post<any>('/runtime/working/queue/fast-drain') as any,
   pauseMaintenance: (reason: string) => api.post<any>('/runtime/working/maintenance/pause', { reason }) as any,
   resumeMaintenance: (reason: string) => api.post<any>('/runtime/working/maintenance/resume', { reason }) as any,
   rollbackMaintenance: (actionId: string, reason: string) =>

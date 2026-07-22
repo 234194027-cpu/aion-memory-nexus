@@ -336,6 +336,7 @@ async def working_status(
             "daily_priority_reserve": settings.WORKING_AGENT_DAILY_PRIORITY_RESERVE,
             "daily_maintenance_call_limit": settings.WORKING_AGENT_DAILY_MAINTENANCE_CALL_LIMIT,
             "scan_batch_size": settings.WORKING_AGENT_SCAN_BATCH_SIZE,
+            "fast_drain_max_batches": settings.WORKING_AGENT_FAST_DRAIN_MAX_BATCHES,
             "timezone": settings.WORKING_AGENT_BUDGET_TIMEZONE,
         },
         "maintenance_actions": {str(action): int(count) for action, count in maintenance_rows},
@@ -374,6 +375,42 @@ async def working_status(
             user_id=user.id
         ),
     }
+
+
+@router.get("/working/queue/fast-drain")
+async def get_working_fast_drain(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    from src.memory.tasks.memory_extraction import fast_drain_status
+
+    return await fast_drain_status(db, user_id=user.id)
+
+
+@router.post("/working/queue/fast-drain", status_code=202)
+async def start_working_fast_drain(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Start a durable, user-scoped queue snapshot drain.
+
+    The task keeps the normal Working-Agent governance boundary.  Only its
+    scheduling delay and daily ordinary-call budget are replaced by the
+    explicit operator-run cap.
+    """
+    from src.memory.tasks.memory_extraction import (
+        create_fast_drain_run,
+        fast_drain_status,
+        trigger_fast_drain,
+    )
+
+    run, created = await create_fast_drain_run(db, user_id=user.id)
+    await db.commit()
+    if created and run.state == "queued":
+        trigger_fast_drain(run.id)
+    status = await fast_drain_status(db, user_id=user.id)
+    status["created"] = created
+    return status
 
 
 @router.get("/working/maintenance/actions")

@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     WORKING_AGENT_DAILY_PRIORITY_RESERVE: int = 32
     WORKING_AGENT_DAILY_MAINTENANCE_CALL_LIMIT: int = 8
     WORKING_AGENT_SCAN_BATCH_SIZE: int = 20
+    # An explicit admin drain is isolated from the daily conversational budget.
+    # The cap is measured in Working-Agent model batches, not raw events; an
+    # ordinary batch can contain up to eight source events.
+    WORKING_AGENT_FAST_DRAIN_MAX_BATCHES: int = 512
     WORKING_AGENT_BUDGET_TIMEZONE: str = "Asia/Shanghai"
 
     # V3 Graphiti/Neo4j is a disposable, internal-only projection.  It is

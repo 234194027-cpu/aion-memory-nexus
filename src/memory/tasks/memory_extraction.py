@@ -1,19 +1,20 @@
 """Event-driven dispatch into the V2.4 autonomous Working-Agent ledger."""
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List
 from src.shared.db.worker import celery_app
 from src.shared.db.database import async_session
 from src.shared.config import settings
-from src.memory.models.raw_event import RawEvent, ProcessingStatus, SensitivityLevel
+from src.memory.models.raw_event import RawEvent, ProcessingStatus, SensitivityLevel, SourceType
 from src.memory.models.committed_memory import CommittedMemory
 from src.memory.models.memory_embedding import MemoryEmbedding
 from src.shared.ids.id_generator import generate_embedding_id
 from src.shared.llm.providers import get_llm_provider
 from src.shared.async_runner import persistent_async_runner, schedule_coroutine
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 
 from src.memory.services.retrieval_engine import deterministic_fallback_embedding, DEFAULT_EMBEDDING_DIM
 from src.shared.utils.runtime_metrics import runtime_metrics
@@ -22,10 +23,16 @@ from src.shared.utils.runtime_metrics import runtime_metrics
 logger = logging.getLogger(__name__)
 PROCESSING_LEASE_SECONDS = 15 * 60
 MAX_PROCESSING_ATTEMPTS = 3
+FAST_DRAIN_ACTIVE_STATES = ("queued", "running")
 
 @celery_app.task
 def process_memory_event(event_id: str):
     persistent_async_runner.run(_process_memory_event(event_id))
+
+
+@celery_app.task
+def fast_drain_queued_events(run_id: str):
+    persistent_async_runner.run(_run_fast_drain(run_id))
 
 
 def trigger_extraction(event_id: str):
@@ -48,11 +55,30 @@ def trigger_extraction(event_id: str):
     schedule_coroutine(_process_memory_event(event_id))
 
 
+def trigger_fast_drain(run_id: str) -> None:
+    """Dispatch an operator-requested drain without blocking the API request."""
+    try:
+        fast_drain_queued_events.delay(run_id)
+        return
+    except Exception:
+        logger.warning("Celery fast-drain enqueue failed; using local fallback", exc_info=True)
+
+    if settings.TESTING:
+        return
+    schedule_coroutine(_run_fast_drain(run_id))
+
+
 def _threaded_extraction(event_id: str):
     persistent_async_runner.run(_process_memory_event(event_id))
 
 
-async def claim_event_for_extraction(session, event_id: str, *, now: datetime | None = None) -> RawEvent | None:
+async def claim_event_for_extraction(
+    session,
+    event_id: str,
+    *,
+    now: datetime | None = None,
+    ignore_retry_at: bool = False,
+) -> RawEvent | None:
     """Atomically lease a queued or stale-processing event for one extractor.
 
     A completed governance decision and its status transition are committed together,
@@ -61,14 +87,19 @@ async def claim_event_for_extraction(session, event_id: str, *, now: datetime | 
     """
     now = now or datetime.now(timezone.utc)
     stale_before = now - timedelta(seconds=PROCESSING_LEASE_SECONDS)
-    claimable = or_(
-        and_(
+    queued_retry_window = (
+        RawEvent.processing_status == ProcessingStatus.QUEUED
+        if ignore_retry_at
+        else and_(
             RawEvent.processing_status == ProcessingStatus.QUEUED,
             or_(
                 RawEvent.processing_next_retry_at.is_(None),
                 RawEvent.processing_next_retry_at <= now,
             ),
-        ),
+        )
+    )
+    claimable = or_(
+        queued_retry_window,
         and_(
             RawEvent.processing_status == ProcessingStatus.FAILED,
             RawEvent.processing_attempts < MAX_PROCESSING_ATTEMPTS,
@@ -168,7 +199,12 @@ async def recover_known_loop_failures(session, *, now: datetime | None = None) -
     return recovered
 
 
-async def _process_memory_event(event_id: str):
+async def _process_memory_event(
+    event_id: str,
+    *,
+    operator_drain: bool = False,
+    operator_cutoff: datetime | None = None,
+):
     """Process one RawEvent through the V2 Working Agent only.
 
     The Working Agent is the sole autonomous formal-memory writer. It may
@@ -182,7 +218,11 @@ async def _process_memory_event(event_id: str):
 
         if not event:
             return
-        claimed_event = await claim_event_for_extraction(session, event_id)
+        claimed_event = await claim_event_for_extraction(
+            session,
+            event_id,
+            ignore_retry_at=operator_drain,
+        )
         if not claimed_event:
             if event.processing_status == ProcessingStatus.PROCESSING:
                 await _wait_for_existing_extraction(event_id)
@@ -207,7 +247,11 @@ async def _process_memory_event(event_id: str):
 
             from src.execution.services.memory_operations import MemoryOperationsCoordinator
 
-            active_result = await MemoryOperationsCoordinator(session).process_event(event)
+            active_result = await MemoryOperationsCoordinator(session).process_event(
+                event,
+                operator_drain=operator_drain,
+                operator_cutoff=operator_cutoff,
+            )
 
             if active_result.state == "DEFERRED":
                 event.processing_status = ProcessingStatus.QUEUED
@@ -340,6 +384,272 @@ async def _process_memory_event(event_id: str):
             except Exception:
                 await session.rollback()
                 logger.error("Failed to mark extraction event as failed event_id=%s", event_id)
+
+
+def _fast_drain_scope(cutoff: datetime):
+    return and_(
+        RawEvent.processing_status == ProcessingStatus.QUEUED,
+        or_(RawEvent.ingested_at.is_(None), RawEvent.ingested_at <= cutoff),
+    )
+
+
+async def create_fast_drain_run(session, *, user_id: str):
+    """Create one durable user-scoped drain, or return the active run."""
+    from src.execution.models.memory_operations import MemoryMaintenanceRun
+    from src.shared.ids.id_generator import generate_id
+
+    active = await session.scalar(
+        select(MemoryMaintenanceRun)
+        .where(
+            MemoryMaintenanceRun.user_id == user_id,
+            MemoryMaintenanceRun.kind == "fast_drain",
+            MemoryMaintenanceRun.state.in_(FAST_DRAIN_ACTIVE_STATES),
+        )
+        .order_by(MemoryMaintenanceRun.started_at.desc())
+        .limit(1)
+    )
+    if active is not None:
+        cursor = dict(active.cursor or {})
+        heartbeat_raw = cursor.get("heartbeat_at")
+        try:
+            heartbeat = datetime.fromisoformat(str(heartbeat_raw))
+            if heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            heartbeat = active.started_at
+            if heartbeat is not None and heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        if heartbeat is not None and datetime.now(timezone.utc) - heartbeat <= timedelta(
+            seconds=PROCESSING_LEASE_SECONDS
+        ):
+            return active, False
+        active.state = "failed"
+        active.error = "fast_drain_lease_expired"
+        active.finished_at = datetime.now(timezone.utc)
+        await session.flush()
+
+    cutoff = datetime.now(timezone.utc)
+    backlog = await session.scalar(
+        select(func.count(RawEvent.id)).where(
+            RawEvent.user_id == user_id,
+            _fast_drain_scope(cutoff),
+        )
+    )
+    run_id = generate_id("mmr")
+    idempotency_key = "fast-drain:" + hashlib.sha256(
+        f"{user_id}:{run_id}".encode("utf-8")
+    ).hexdigest()
+    run = MemoryMaintenanceRun(
+        id=run_id,
+        user_id=user_id,
+        kind="fast_drain",
+        state="queued" if backlog else "completed",
+        idempotency_key=idempotency_key,
+        cursor={"cutoff_at": cutoff.isoformat(), "heartbeat_at": cutoff.isoformat()},
+        counters={
+            "starting_backlog": int(backlog or 0),
+            "processed_events": 0,
+            "remaining_events": int(backlog or 0),
+            "model_calls": 0,
+            "failed_events": 0,
+        },
+        token_budget=0,
+        token_used=0,
+        finished_at=cutoff if not backlog else None,
+    )
+    session.add(run)
+    await session.flush()
+    return run, True
+
+
+async def fast_drain_status(session, *, user_id: str) -> dict:
+    """Return bounded operator progress without exposing source content."""
+    from src.execution.models.memory_operations import MemoryMaintenanceRun
+
+    run = await session.scalar(
+        select(MemoryMaintenanceRun)
+        .where(
+            MemoryMaintenanceRun.user_id == user_id,
+            MemoryMaintenanceRun.kind == "fast_drain",
+        )
+        .order_by(MemoryMaintenanceRun.started_at.desc())
+        .limit(1)
+    )
+    overall_backlog = await session.scalar(
+        select(func.count(RawEvent.id)).where(
+            RawEvent.user_id == user_id,
+            RawEvent.processing_status == ProcessingStatus.QUEUED,
+        )
+    )
+    if run is None:
+        return {
+            "run_id": None,
+            "state": "idle",
+            "active": False,
+            "counters": {},
+            "overall_backlog": int(overall_backlog or 0),
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+        }
+    active = run.state in FAST_DRAIN_ACTIVE_STATES
+    public_state = run.state
+    if active:
+        heartbeat_raw = dict(run.cursor or {}).get("heartbeat_at")
+        try:
+            heartbeat = datetime.fromisoformat(str(heartbeat_raw))
+            if heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            heartbeat = run.started_at
+            if heartbeat is not None and heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        if heartbeat is None or datetime.now(timezone.utc) - heartbeat > timedelta(
+            seconds=PROCESSING_LEASE_SECONDS
+        ):
+            active = False
+            public_state = "stalled"
+    return {
+        "run_id": run.id,
+        "state": public_state,
+        "active": active,
+        "counters": dict(run.counters or {}),
+        "overall_backlog": int(overall_backlog or 0),
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "error": run.error,
+    }
+
+
+async def _run_fast_drain(run_id: str) -> None:
+    """Immediately drain the queue snapshot using the governed Working Agent."""
+    from src.execution.models.agent_runtime import AgentRun
+    from src.execution.models.memory_operations import MemoryMaintenanceRun
+
+    async with async_session() as session:
+        claimed = await session.execute(
+            update(MemoryMaintenanceRun)
+            .where(
+                MemoryMaintenanceRun.id == run_id,
+                MemoryMaintenanceRun.kind == "fast_drain",
+                MemoryMaintenanceRun.state == "queued",
+            )
+            .values(state="running", error=None)
+        )
+        await session.commit()
+        if claimed.rowcount != 1:
+            return
+
+    try:
+        while True:
+            async with async_session() as session:
+                run = await session.get(MemoryMaintenanceRun, run_id)
+                if run is None or run.state != "running" or not run.user_id:
+                    return
+                cursor = dict(run.cursor or {})
+                cutoff = datetime.fromisoformat(str(cursor["cutoff_at"]))
+                if cutoff.tzinfo is None:
+                    cutoff = cutoff.replace(tzinfo=timezone.utc)
+                counters = dict(run.counters or {})
+                max_calls = max(1, settings.WORKING_AGENT_FAST_DRAIN_MAX_BATCHES)
+                if int(counters.get("model_calls") or 0) >= max_calls:
+                    run.state = "budget_exhausted"
+                    run.finished_at = datetime.now(timezone.utc)
+                    run.error = "fast_drain_batch_budget_exhausted"
+                    await session.commit()
+                    return
+
+                source_priority = case(
+                    (RawEvent.source_type == SourceType.CONVERSATION, 0),
+                    (RawEvent.source_type == SourceType.MANUAL, 1),
+                    else_=2,
+                )
+                event = await session.scalar(
+                    select(RawEvent)
+                    .where(
+                        RawEvent.user_id == run.user_id,
+                        _fast_drain_scope(cutoff),
+                    )
+                    .order_by(source_priority.asc(), RawEvent.occurred_at.asc())
+                    .limit(1)
+                )
+                if event is None:
+                    run.state = (
+                        "completed_with_errors"
+                        if int(counters.get("failed_events") or 0)
+                        else "completed"
+                    )
+                    counters["remaining_events"] = 0
+                    run.counters = counters
+                    run.finished_at = datetime.now(timezone.utc)
+                    await session.commit()
+                    return
+                event_id = event.id
+                user_id = run.user_id
+                run_started_at = run.started_at
+
+            await _process_memory_event(
+                event_id,
+                operator_drain=True,
+                operator_cutoff=cutoff,
+            )
+
+            async with async_session() as session:
+                run = await session.get(MemoryMaintenanceRun, run_id)
+                if run is None or run.state != "running":
+                    return
+                event = await session.get(RawEvent, event_id)
+                cutoff = datetime.fromisoformat(str((run.cursor or {})["cutoff_at"]))
+                if cutoff.tzinfo is None:
+                    cutoff = cutoff.replace(tzinfo=timezone.utc)
+                remaining = await session.scalar(
+                    select(func.count(RawEvent.id)).where(
+                        RawEvent.user_id == user_id,
+                        _fast_drain_scope(cutoff),
+                    )
+                )
+                call_row = (
+                    await session.execute(
+                        select(
+                            func.coalesce(func.sum(AgentRun.model_call_count), 0),
+                            func.coalesce(
+                                func.sum(
+                                    func.coalesce(AgentRun.input_tokens, 0)
+                                    + func.coalesce(AgentRun.output_tokens, 0)
+                                ),
+                                0,
+                            ),
+                        ).where(
+                            AgentRun.user_id == user_id,
+                            AgentRun.trigger_type == "raw_event",
+                            AgentRun.trigger_id == event_id,
+                            AgentRun.started_at >= run_started_at,
+                        )
+                    )
+                ).one()
+                counters = dict(run.counters or {})
+                starting = int(counters.get("starting_backlog") or 0)
+                counters["remaining_events"] = int(remaining or 0)
+                counters["processed_events"] = max(0, starting - int(remaining or 0))
+                counters["model_calls"] = int(counters.get("model_calls") or 0) + int(call_row[0] or 0)
+                if event is not None and event.processing_status == ProcessingStatus.FAILED:
+                    counters["failed_events"] = int(counters.get("failed_events") or 0) + 1
+                cursor = dict(run.cursor or {})
+                cursor["heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+                cursor["last_event_id"] = event_id
+                run.cursor = cursor
+                run.counters = counters
+                run.token_used = int(run.token_used or 0) + int(call_row[1] or 0)
+                await session.commit()
+    except Exception as exc:
+        logger.error("Fast drain failed run_id=%s error_type=%s", run_id, type(exc).__name__)
+        async with async_session() as session:
+            run = await session.get(MemoryMaintenanceRun, run_id)
+            if run is not None:
+                run.state = "failed"
+                run.error = type(exc).__name__[:256]
+                run.finished_at = datetime.now(timezone.utc)
+                await session.commit()
 
 
 async def _wait_for_existing_extraction(

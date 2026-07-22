@@ -342,8 +342,19 @@ class MemoryOperationsCoordinator:
             return "priority"
         return "ordinary"
 
-    async def process_event(self, event: RawEvent) -> OperationEventResult:
-        """Run the only live ingestion path after deterministic noise gating."""
+    async def process_event(
+        self,
+        event: RawEvent,
+        *,
+        operator_drain: bool = False,
+        operator_cutoff: datetime | None = None,
+    ) -> OperationEventResult:
+        """Run the only live ingestion path after deterministic noise gating.
+
+        ``operator_drain`` only removes scheduling delays and the ordinary
+        daily call ceiling for an authenticated, separately budgeted drain
+        run.  It does not relax evidence, sensitivity or commit governance.
+        """
         kind = self.classify_event(event)
         if kind == "noise":
             event.processing_result = "discarded_noise"
@@ -352,13 +363,17 @@ class MemoryOperationsCoordinator:
             return OperationEventResult("DISCARDED", skipped=True)
 
         if kind == "ordinary":
-            ready, deferred_until = await self._prepare_microbatch(event)
+            ready, deferred_until = await self._prepare_microbatch(
+                event,
+                force_ready=operator_drain,
+                ingested_before=operator_cutoff,
+            )
             if not ready:
                 return OperationEventResult(
                     "DEFERRED", skipped=True, deferred_until=deferred_until
                 )
 
-        if await self._extract_budget_exhausted(
+        if not operator_drain and await self._extract_budget_exhausted(
             event.user_id,
             priority=kind == "priority",
         ):
@@ -398,7 +413,13 @@ class MemoryOperationsCoordinator:
             active.handoff_id,
         )
 
-    async def _prepare_microbatch(self, event: RawEvent) -> tuple[bool, datetime | None]:
+    async def _prepare_microbatch(
+        self,
+        event: RawEvent,
+        *,
+        force_ready: bool = False,
+        ingested_before: datetime | None = None,
+    ) -> tuple[bool, datetime | None]:
         """Hold ordinary ingress briefly, then process one source-grounded batch."""
         metadata = dict(event.event_metadata or {})
         existing = metadata.get("batch_source_event_ids")
@@ -406,27 +427,35 @@ class MemoryOperationsCoordinator:
             return True, None
 
         now = datetime.now(UTC)
+        queued_statement = (
+            select(RawEvent)
+            .where(
+                RawEvent.user_id == event.user_id,
+                RawEvent.source_type == event.source_type,
+                RawEvent.sensitivity == event.sensitivity,
+                RawEvent.visibility_scope == event.visibility_scope,
+                RawEvent.processing_status.in_(
+                    (ProcessingStatus.QUEUED, ProcessingStatus.PROCESSING)
+                ),
+            )
+            .order_by(RawEvent.occurred_at.asc())
+            .limit(MICROBATCH_MAX_EVENTS)
+        )
+        if ingested_before is not None:
+            queued_statement = queued_statement.where(
+                or_(
+                    RawEvent.ingested_at.is_(None),
+                    RawEvent.ingested_at <= ingested_before,
+                )
+            )
         queued = list(
             (
-                await self.db.execute(
-                    select(RawEvent)
-                    .where(
-                        RawEvent.user_id == event.user_id,
-                        RawEvent.source_type == event.source_type,
-                        RawEvent.sensitivity == event.sensitivity,
-                        RawEvent.visibility_scope == event.visibility_scope,
-                        RawEvent.processing_status.in_(
-                            (ProcessingStatus.QUEUED, ProcessingStatus.PROCESSING)
-                        ),
-                    )
-                    .order_by(RawEvent.occurred_at.asc())
-                    .limit(MICROBATCH_MAX_EVENTS)
-                )
+                await self.db.execute(queued_statement)
             ).scalars()
         )
         ids = list(dict.fromkeys([event.id, *(item.id for item in queued)]))[:MICROBATCH_MAX_EVENTS]
         due_at = (event.occurred_at or now) + MICROBATCH_WAIT
-        if len(ids) < MICROBATCH_MAX_EVENTS and now < due_at:
+        if not force_ready and len(ids) < MICROBATCH_MAX_EVENTS and now < due_at:
             return False, due_at
 
         metadata["batch_source_event_ids"] = ids

@@ -14,7 +14,7 @@
     <el-card class="runtime-card" v-loading="runtimeLoading">
       <template #header>
         <div class="section-title">
-        <h3>双 Agent V2.5.3</h3>
+        <h3>双 Agent V2.5.4</h3>
           <el-tag type="success">自主记忆治理</el-tag>
         </div>
       </template>
@@ -40,6 +40,12 @@
       </dl>
       <div class="runtime-actions">
         <el-button
+          type="primary"
+          :loading="fastDrainLoading || fastDrainStatus?.active"
+          :disabled="!workingStatus?.queue_backlog || fastDrainStatus?.active"
+          @click="startFastDrain"
+        >一键快速处理排队事件</el-button>
+        <el-button
           v-if="maintenanceControl?.state === 'active'"
           type="warning"
           @click="pauseMaintenance"
@@ -51,6 +57,20 @@
         >进入 Shadow 恢复</el-button>
         <span>{{ maintenanceControl?.pause_reason || '对话与事件采集不会被维护开关中断。' }}</span>
       </div>
+      <el-alert
+        v-if="fastDrainStatus?.run_id"
+        class="drain-progress"
+        :type="fastDrainAlertType"
+        :closable="false"
+        show-icon
+        :title="fastDrainTitle"
+      >
+        <template #default>
+          本次已处理 {{ fastDrainStatus?.counters?.processed_events ?? 0 }} / {{ fastDrainStatus?.counters?.starting_backlog ?? 0 }} 条，
+          剩余 {{ fastDrainStatus?.counters?.remaining_events ?? 0 }} 条；
+          工作模型调用 {{ fastDrainStatus?.counters?.model_calls ?? 0 }} 次，失败 {{ fastDrainStatus?.counters?.failed_events ?? 0 }} 条。
+        </template>
+      </el-alert>
     </el-card>
 
     <el-card class="table-card maintenance-card">
@@ -233,7 +253,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { agentsApi, runtimeApi } from '../../api'
@@ -251,6 +271,9 @@ const workingStatus = ref<any>(null)
 const maintenanceControl = ref<any>(null)
 const maintenanceActions = ref<any[]>([])
 const runtimeLoading = ref(false)
+const fastDrainLoading = ref(false)
+const fastDrainStatus = ref<any>(null)
+let fastDrainTimer: ReturnType<typeof setInterval> | null = null
 
 const createForm = reactive({
   agent_name: '',
@@ -269,19 +292,76 @@ const fetchData = async () => {
   loading.value = true
   runtimeLoading.value = true
   try {
-    const [res, status, control, actions] = await Promise.all([
+    const [res, status, control, actions, drain] = await Promise.all([
       agentsApi.list(),
       agentsApi.workingStatus(),
       runtimeApi.maintenanceControl(),
-      runtimeApi.maintenanceActions(20)
+      runtimeApi.maintenanceActions(20),
+      runtimeApi.fastDrainStatus()
     ])
     agentList.value = normalizeList(res)
     workingStatus.value = status
     maintenanceControl.value = control
     maintenanceActions.value = actions?.items || []
+    fastDrainStatus.value = drain
+    syncFastDrainPolling()
   } finally {
     loading.value = false
     runtimeLoading.value = false
+  }
+}
+
+const fastDrainAlertType = computed(() => {
+  if (fastDrainStatus.value?.state === 'failed' || fastDrainStatus.value?.state === 'completed_with_errors') return 'error'
+  if (['budget_exhausted', 'stalled'].includes(fastDrainStatus.value?.state)) return 'warning'
+  return fastDrainStatus.value?.active ? 'info' : 'success'
+})
+
+const fastDrainTitle = computed(() => ({
+  queued: '快速处理任务已排队',
+  running: '工作 Agent 正在快速处理队列',
+  completed: '本次排队事件已全部处理',
+  completed_with_errors: '本次处理完成，但有事件进入失败重试',
+  budget_exhausted: '本次快速处理额度已用完，可再次启动继续处理',
+  stalled: '上次任务心跳已超时，可重新启动继续处理',
+  failed: '快速处理任务异常结束'
+}[fastDrainStatus.value?.state] || '快速处理状态'))
+
+const stopFastDrainPolling = () => {
+  if (fastDrainTimer) clearInterval(fastDrainTimer)
+  fastDrainTimer = null
+}
+
+const refreshFastDrain = async () => {
+  const [status, working] = await Promise.all([
+    runtimeApi.fastDrainStatus(),
+    agentsApi.workingStatus()
+  ])
+  fastDrainStatus.value = status
+  workingStatus.value = working
+  if (!status?.active) stopFastDrainPolling()
+}
+
+const syncFastDrainPolling = () => {
+  if (!fastDrainStatus.value?.active || fastDrainTimer) return
+  fastDrainTimer = setInterval(() => {
+    refreshFastDrain().catch(() => stopFastDrainPolling())
+  }, 3000)
+}
+
+const startFastDrain = async () => {
+  await ElMessageBox.confirm(
+    `将立即处理当前 ${workingStatus.value?.queue_backlog || 0} 条排队事件。任务在后台运行，仍遵守工作 Agent 的来源、敏感度和记忆治理规则。`,
+    '快速处理全部排队事件',
+    { confirmButtonText: '开始处理', cancelButtonText: '取消', type: 'warning' }
+  )
+  fastDrainLoading.value = true
+  try {
+    fastDrainStatus.value = await runtimeApi.startFastDrain()
+    ElMessage.success(fastDrainStatus.value?.created === false ? '已有快速处理任务正在运行' : '快速处理任务已启动')
+    syncFastDrainPolling()
+  } finally {
+    fastDrainLoading.value = false
   }
 }
 
@@ -396,6 +476,7 @@ const copy = async (text: string) => {
 }
 
 onMounted(fetchData)
+onBeforeUnmount(stopFastDrainPolling)
 </script>
 
 <style scoped>
@@ -467,6 +548,10 @@ onMounted(fetchData)
   border-top: 1px solid #e4e7ec;
   color: #667085;
   font-size: 13px;
+}
+
+.drain-progress {
+  margin-top: 14px;
 }
 
 .maintenance-card {
