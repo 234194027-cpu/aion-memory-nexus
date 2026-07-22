@@ -333,6 +333,7 @@ async def working_status(
         "autonomous_memory_enabled": True,
         "resource_budget": {
             "daily_model_call_limit": settings.WORKING_AGENT_DAILY_MODEL_CALL_LIMIT,
+            "daily_priority_reserve": settings.WORKING_AGENT_DAILY_PRIORITY_RESERVE,
             "daily_maintenance_call_limit": settings.WORKING_AGENT_DAILY_MAINTENANCE_CALL_LIMIT,
             "scan_batch_size": settings.WORKING_AGENT_SCAN_BATCH_SIZE,
             "timezone": settings.WORKING_AGENT_BUDGET_TIMEZONE,

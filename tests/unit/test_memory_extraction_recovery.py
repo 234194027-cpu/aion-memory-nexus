@@ -80,6 +80,44 @@ def test_trigger_extraction_prefers_celery_enqueue(monkeypatch) -> None:
     assert enqueued == ["event-celery"]
 
 
+def test_legacy_runtime_failure_without_retry_timestamp_is_recovered_once() -> None:
+    from src.memory.tasks.memory_extraction import recover_known_loop_failures
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            now = datetime.now(timezone.utc)
+            async with factory() as session:
+                session.add(RawEvent(
+                    id="legacy-runtime-no-retry",
+                    user_id="u1",
+                    source_type=SourceType.MANUAL,
+                    occurred_at=now,
+                    content="旧失败事件",
+                    content_hash="legacy-runtime-no-retry",
+                    sensitivity=SensitivityLevel.NORMAL,
+                    visibility_scope=VisibilityScope.PERSONAL,
+                    processing_status=ProcessingStatus.FAILED,
+                    processing_attempts=1,
+                    processing_error="RuntimeError",
+                    processing_result="failed",
+                    processing_next_retry_at=None,
+                ))
+                await session.commit()
+                assert await recover_known_loop_failures(session, now=now) == 1
+                assert await recover_known_loop_failures(session, now=now) == 0
+                event = await session.get(RawEvent, "legacy-runtime-no-retry")
+                assert event.processing_status is ProcessingStatus.QUEUED
+                assert event.event_metadata["runtime_recovery_version"] == "2.5.2"
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_trigger_extraction_falls_back_to_persistent_loop_when_enqueue_fails(monkeypatch) -> None:
     from src.memory.tasks import memory_extraction
     from src.shared.config import settings

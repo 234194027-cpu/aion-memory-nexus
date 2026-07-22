@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     # Resource budgets are operational controls, not governance permissions.
     # Keep them configurable so production backlogs can drain without code edits.
     WORKING_AGENT_DAILY_MODEL_CALL_LIMIT: int = 96
+    WORKING_AGENT_DAILY_PRIORITY_RESERVE: int = 32
     WORKING_AGENT_DAILY_MAINTENANCE_CALL_LIMIT: int = 8
     WORKING_AGENT_SCAN_BATCH_SIZE: int = 20
     WORKING_AGENT_BUDGET_TIMEZONE: str = "Asia/Shanghai"

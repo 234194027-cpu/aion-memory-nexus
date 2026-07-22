@@ -8,7 +8,7 @@
 [![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
 [![CI](https://github.com/234194027-cpu/aion-memory-nexus/actions/workflows/quality.yml/badge.svg)](https://github.com/234194027-cpu/aion-memory-nexus/actions/workflows/quality.yml)
 
-**当前版本：2.5.2 · 许可证：[MIT](LICENSE) · 开源状态：Public**
+**当前版本：2.5.3 · 许可证：[MIT](LICENSE) · 开源状态：Public**
 
 ## 不只是记忆库：你的可信第二大脑
 

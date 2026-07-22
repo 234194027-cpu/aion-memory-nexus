@@ -70,6 +70,26 @@ class JsonCompatibilityModel:
                 response_mode="ANSWER" if plain_text else None,
                 confidence="LOW" if plain_text else None,
             )
+        if not isinstance(payload, dict):
+            return RuntimeModelResponse(text="", model=self.model_name)
+        if self.role == "working" and payload.get("business_state") in {
+            "MEMORY_READY",
+            "DISCARDED",
+            "NEEDS_MORE_EVIDENCE",
+            "CONFLICT_REVIEW",
+            "USER_CONFIRMATION_REQUIRED",
+        }:
+            # The Working profile asks for this business object directly. Some
+            # compatible providers follow that schema instead of wrapping it
+            # in the generic {"final": "..."} transport envelope. Treat only
+            # the allow-listed business state as final text; it still passes
+            # through WorkingCoordinator governance before any write.
+            return RuntimeModelResponse(
+                text=json.dumps(payload, ensure_ascii=False),
+                model=self.model_name,
+                response_mode="PLAN",
+                confidence="MEDIUM",
+            )
         if isinstance(payload.get("final"), str):
             mode = payload.get("response_mode")
             confidence = payload.get("confidence")

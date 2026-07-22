@@ -72,6 +72,24 @@ def test_budget_resets_at_shanghai_midnight(monkeypatch) -> None:
     assert end == datetime(2026, 7, 22, 16, 0, tzinfo=timezone.utc)
 
 
+def test_priority_events_have_a_separate_daily_reserve(monkeypatch) -> None:
+    from src.shared.config import settings
+
+    class FakeDB:
+        async def scalar(self, _statement):
+            return 100
+
+    monkeypatch.setattr(settings, "WORKING_AGENT_DAILY_MODEL_CALL_LIMIT", 96)
+    monkeypatch.setattr(settings, "WORKING_AGENT_DAILY_PRIORITY_RESERVE", 32)
+
+    async def run() -> None:
+        coordinator = MemoryOperationsCoordinator(FakeDB())
+        assert await coordinator._extract_budget_exhausted("u1") is True
+        assert await coordinator._extract_budget_exhausted("u1", priority=True) is False
+
+    asyncio.run(run())
+
+
 def test_ordinary_event_waits_for_microbatch_without_working_model() -> None:
     async def run() -> None:
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")

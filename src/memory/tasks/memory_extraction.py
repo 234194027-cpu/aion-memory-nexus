@@ -137,8 +137,11 @@ async def recover_known_loop_failures(session, *, now: datetime | None = None) -
                 select(RawEvent)
                 .where(
                     RawEvent.processing_status == ProcessingStatus.FAILED,
-                    RawEvent.processing_attempts >= MAX_PROCESSING_ATTEMPTS,
                     RawEvent.processing_error == "RuntimeError",
+                    or_(
+                        RawEvent.processing_attempts >= MAX_PROCESSING_ATTEMPTS,
+                        RawEvent.processing_next_retry_at.is_(None),
+                    ),
                 )
                 .order_by(RawEvent.occurred_at.asc())
                 .limit(100)

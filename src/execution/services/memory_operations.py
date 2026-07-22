@@ -358,7 +358,10 @@ class MemoryOperationsCoordinator:
                     "DEFERRED", skipped=True, deferred_until=deferred_until
                 )
 
-        if await self._extract_budget_exhausted(event.user_id):
+        if await self._extract_budget_exhausted(
+            event.user_id,
+            priority=kind == "priority",
+        ):
             return OperationEventResult(
                 "DEFERRED", skipped=True, deferred_until=self._next_utc_day()
             )
@@ -431,7 +434,7 @@ class MemoryOperationsCoordinator:
         event.event_metadata = metadata
         return True, None
 
-    async def _extract_budget_exhausted(self, user_id: str) -> bool:
+    async def _extract_budget_exhausted(self, user_id: str, *, priority: bool = False) -> bool:
         day_start, _ = self._budget_window()
         calls = await self.db.scalar(
             select(func.coalesce(func.sum(AgentRun.model_call_count), 0))
@@ -442,7 +445,10 @@ class MemoryOperationsCoordinator:
                 AgentSession.agent_role == AgentRole.WORKING,
             )
         )
-        return int(calls or 0) >= max(1, settings.WORKING_AGENT_DAILY_MODEL_CALL_LIMIT)
+        limit = max(1, settings.WORKING_AGENT_DAILY_MODEL_CALL_LIMIT)
+        if priority:
+            limit += max(0, settings.WORKING_AGENT_DAILY_PRIORITY_RESERVE)
+        return int(calls or 0) >= limit
 
     @staticmethod
     def _budget_window(now: datetime | None = None) -> tuple[datetime, datetime]:

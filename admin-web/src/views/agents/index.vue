@@ -14,7 +14,7 @@
     <el-card class="runtime-card" v-loading="runtimeLoading">
       <template #header>
         <div class="section-title">
-        <h3>双 Agent V2.5.2</h3>
+        <h3>双 Agent V2.5.3</h3>
           <el-tag type="success">自主记忆治理</el-tag>
         </div>
       </template>

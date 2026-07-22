@@ -253,6 +253,23 @@ def test_json_compatibility_adapter_accepts_only_strict_tool_protocol():
     assert response.tool_calls == (ToolCall("lookup", {"query": "x"}),)
 
 
+def test_working_adapter_accepts_direct_governed_business_json() -> None:
+    class Provider:
+        async def generate(self, *_args, **_kwargs):
+            return '{"business_state":"NEEDS_MORE_EVIDENCE","memories":[],"question":"计划是什么时候？"}'
+
+    response = asyncio.run(
+        JsonCompatibilityModel(Provider(), role="working").complete(
+            system_prompt="fixed",
+            messages=({"role": "user", "content": "evidence"},),
+            tools={},
+        )
+    )
+    assert response.text.startswith('{"business_state": "NEEDS_MORE_EVIDENCE"')
+    assert response.response_mode == "PLAN"
+    assert response.tool_calls == ()
+
+
 def test_runtime_keeps_only_citations_returned_by_a_tool():
     async def run():
         async def lookup(_user_id, _params):
