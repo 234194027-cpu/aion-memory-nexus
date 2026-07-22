@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from src.memory.models.committed_memory import CommittedMemory, CommittedStatus
 from src.memory.models.memory_source import MemorySource
 from src.memory.models.raw_event import ProcessingStatus, RawEvent, SensitivityLevel
 from src.memory.services.deduplicator import MemoryDeduplicator
+from src.shared.config import settings
 from src.shared.ids.id_generator import generate_id
 
 
@@ -37,12 +39,27 @@ UTC = timezone.utc
 NOISE_MARKERS = ("测试", "test", "hello", "hi", "哈哈", "哈哈哈", "ok", "好的", "收到")
 EXPLICIT_MARKERS = ("请记住", "帮我记住", "纠正", "改成", "我计划", "我准备", "截止", "承诺")
 SENSITIVE_VALUES = {SensitivityLevel.PRIVATE.value, SensitivityLevel.SENSITIVE.value}
-DAILY_EXTRACT_LIMIT = 24
-DAILY_MAINTENANCE_LLM_LIMIT = 4
 MICROBATCH_MAX_EVENTS = 8
 MICROBATCH_WAIT = timedelta(minutes=15)
 MAINTENANCE_STATES = {"active", "shadow", "paused_automatically", "paused_manually", "recovering"}
 HIGH_RISK_ACTIONS = {"merge", "supersede", "expire", "compact", "purge", "rewrite"}
+
+
+def _memory_body_text(value: Any) -> str:
+    """Normalize legacy JSON-shaped bodies without inventing memory content."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, (list, tuple)):
+        return " ".join(
+            part for part in (_memory_body_text(item) for item in value) if part
+        )
+    if isinstance(value, dict):
+        return " ".join(
+            part for part in (_memory_body_text(item) for item in value.values()) if part
+        )
+    return " ".join(str(value).split())
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,7 +329,12 @@ class MemoryOperationsCoordinator:
         metadata = dict(event.event_metadata or {})
         if metadata.get("runtime_handoff_response") or metadata.get("correction_of_event_id"):
             return "priority"
-        if any(marker in text for marker in EXPLICIT_MARKERS):
+        # Imported Agent/API backlogs are untrusted evidence and should be
+        # micro-batched even when their prose happens to contain priority words.
+        # Interactive user sources keep immediate handling.
+        if event.source_type.value in {"conversation", "manual"} and any(
+            marker in text for marker in EXPLICIT_MARKERS
+        ):
             return "priority"
         if len(text) <= 3 or text in NOISE_MARKERS:
             return "noise"
@@ -410,7 +432,7 @@ class MemoryOperationsCoordinator:
         return True, None
 
     async def _extract_budget_exhausted(self, user_id: str) -> bool:
-        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start, _ = self._budget_window()
         calls = await self.db.scalar(
             select(func.coalesce(func.sum(AgentRun.model_call_count), 0))
             .join(AgentSession, AgentSession.id == AgentRun.session_id)
@@ -420,12 +442,22 @@ class MemoryOperationsCoordinator:
                 AgentSession.agent_role == AgentRole.WORKING,
             )
         )
-        return int(calls or 0) >= DAILY_EXTRACT_LIMIT
+        return int(calls or 0) >= max(1, settings.WORKING_AGENT_DAILY_MODEL_CALL_LIMIT)
 
     @staticmethod
-    def _next_utc_day() -> datetime:
-        now = datetime.now(UTC)
-        return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    def _budget_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+        now = now or datetime.now(UTC)
+        try:
+            zone = ZoneInfo(settings.WORKING_AGENT_BUDGET_TIMEZONE)
+        except Exception:
+            zone = ZoneInfo("Asia/Shanghai")
+        local_now = now.astimezone(zone)
+        local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC)
+
+    @classmethod
+    def _next_utc_day(cls) -> datetime:
+        return cls._budget_window()[1]
 
     async def run_maintenance(
         self,
@@ -452,11 +484,18 @@ class MemoryOperationsCoordinator:
                 idempotency_key=key,
                 cursor={},
                 counters={},
-                token_budget=DAILY_MAINTENANCE_LLM_LIMIT * 400,
+                token_budget=max(1, settings.WORKING_AGENT_DAILY_MAINTENANCE_CALL_LIMIT) * 400,
                 token_used=0,
             )
             self.db.add(run)
             await self.db.flush()
+        else:
+            run.state = "running"
+            run.error = None
+            run.finished_at = None
+        # Persist the lease/run envelope before maintenance work.  A later
+        # data-shape or provider failure must remain visible to operators.
+        await self.db.commit()
 
         counters = {
             "merged": 0,
@@ -494,10 +533,19 @@ class MemoryOperationsCoordinator:
             await self.db.flush()
             return counters
         except Exception as exc:
+            await self.db.rollback()
+            run = await self.db.scalar(
+                select(MemoryMaintenanceRun).where(
+                    MemoryMaintenanceRun.idempotency_key == key
+                )
+            )
+            if run is None:
+                raise
             run.state = "failed"
             run.error = type(exc).__name__[:256]
             run.finished_at = datetime.now(UTC)
             await self.db.flush()
+            await self.db.commit()
             raise
 
     async def refresh_user_brief(self, user_id: str) -> bool:
@@ -521,7 +569,7 @@ class MemoryOperationsCoordinator:
             return False
         lines = ["# 当前正式记忆摘要"]
         for item in memories:
-            body = " ".join((item.body or "").split())[:180]
+            body = _memory_body_text(item.body)[:180]
             lines.append(f"- [{item.id}] {item.title[:100]}：{body}")
         content = "\n".join(lines) if len(lines) > 1 else "# 当前正式记忆摘要\n- 暂无可自动加载的正式记忆。"
         if existing is None:

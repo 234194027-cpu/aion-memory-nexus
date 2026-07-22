@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import threading
 from datetime import datetime, timedelta, timezone
 from typing import List
 from src.shared.db.worker import celery_app
@@ -13,6 +12,7 @@ from src.memory.models.committed_memory import CommittedMemory
 from src.memory.models.memory_embedding import MemoryEmbedding
 from src.shared.ids.id_generator import generate_embedding_id
 from src.shared.llm.providers import get_llm_provider
+from src.shared.async_runner import persistent_async_runner, schedule_coroutine
 from sqlalchemy import and_, func, or_, select, update
 
 from src.memory.services.retrieval_engine import deterministic_fallback_embedding, DEFAULT_EMBEDDING_DIM
@@ -25,7 +25,7 @@ MAX_PROCESSING_ATTEMPTS = 3
 
 @celery_app.task
 def process_memory_event(event_id: str):
-    asyncio.run(_process_memory_event(event_id))
+    persistent_async_runner.run(_process_memory_event(event_id))
 
 
 def trigger_extraction(event_id: str):
@@ -41,13 +41,15 @@ def trigger_extraction(event_id: str):
     except Exception:
         logger.warning("Celery enqueue failed; using local extraction fallback", exc_info=True)
 
-    thread = threading.Thread(target=_threaded_extraction, args=(event_id,))
-    thread.daemon = True
-    thread.start()
+    if settings.TESTING:
+        # Integration tests use one shared SQLite file; an unsupervised
+        # background writer would create lock races unrelated to production.
+        return
+    schedule_coroutine(_process_memory_event(event_id))
 
 
 def _threaded_extraction(event_id: str):
-    asyncio.run(_process_memory_event(event_id))
+    persistent_async_runner.run(_process_memory_event(event_id))
 
 
 async def claim_event_for_extraction(session, event_id: str, *, now: datetime | None = None) -> RawEvent | None:
@@ -60,7 +62,13 @@ async def claim_event_for_extraction(session, event_id: str, *, now: datetime | 
     now = now or datetime.now(timezone.utc)
     stale_before = now - timedelta(seconds=PROCESSING_LEASE_SECONDS)
     claimable = or_(
-        RawEvent.processing_status == ProcessingStatus.QUEUED,
+        and_(
+            RawEvent.processing_status == ProcessingStatus.QUEUED,
+            or_(
+                RawEvent.processing_next_retry_at.is_(None),
+                RawEvent.processing_next_retry_at <= now,
+            ),
+        ),
         and_(
             RawEvent.processing_status == ProcessingStatus.FAILED,
             RawEvent.processing_attempts < MAX_PROCESSING_ATTEMPTS,
@@ -118,6 +126,43 @@ async def recover_stale_extraction_events(session, *, now: datetime | None = Non
     )
     await session.commit()
     return int(result.rowcount or 0)
+
+
+async def recover_known_loop_failures(session, *, now: datetime | None = None) -> int:
+    """Retry each pre-2.5.2 event-loop failure exactly once after the fix."""
+    now = now or datetime.now(timezone.utc)
+    rows = list(
+        (
+            await session.execute(
+                select(RawEvent)
+                .where(
+                    RawEvent.processing_status == ProcessingStatus.FAILED,
+                    RawEvent.processing_attempts >= MAX_PROCESSING_ATTEMPTS,
+                    RawEvent.processing_error == "RuntimeError",
+                )
+                .order_by(RawEvent.occurred_at.asc())
+                .limit(100)
+            )
+        ).scalars()
+    )
+    recovered = 0
+    for event in rows:
+        metadata = dict(event.event_metadata or {})
+        if metadata.get("runtime_recovery_version") == "2.5.2":
+            continue
+        metadata["runtime_recovery_version"] = "2.5.2"
+        event.event_metadata = metadata
+        event.processing_status = ProcessingStatus.QUEUED
+        event.processing_attempts = 0
+        event.processing_started_at = None
+        event.processing_heartbeat_at = now
+        event.processing_next_retry_at = now
+        event.processing_error = None
+        event.processing_result = "runtime_loop_recovered"
+        recovered += 1
+    if recovered:
+        await session.commit()
+    return recovered
 
 
 async def _process_memory_event(event_id: str):
@@ -324,12 +369,9 @@ async def _wait_for_existing_extraction(
 
 def schedule_embedding_generation(memory_id: str) -> None:
     """Trigger embedding generation asynchronously — must not block the pipeline."""
-    def _run():
-        loop = None
+    async def _run() -> None:
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            ok = loop.run_until_complete(generate_embedding_for_memory_with_retry(memory_id))
+            ok = await generate_embedding_for_memory_with_retry(memory_id)
             if ok:
                 runtime_metrics.record_task("embedding_generation")
                 logger.info(f"Embedding generated for memory {memory_id}")
@@ -339,15 +381,8 @@ def schedule_embedding_generation(memory_id: str) -> None:
         except Exception as e:
             runtime_metrics.record_task("embedding_generation", failed=True)
             logger.error("Embedding async failed memory_id=%s error_type=%s", memory_id, type(e).__name__)
-        finally:
-            if loop is not None:
-                try:
-                    loop.close()
-                except Exception:
-                    pass
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    schedule_coroutine(_run())
 
 
 async def generate_embedding_for_memory_with_retry(

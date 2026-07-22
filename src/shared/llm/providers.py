@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 import httpx
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -610,6 +611,10 @@ def _provider_instance_cache_key(
     temperature: float,
     max_tokens: int,
 ) -> str:
+    try:
+        loop_identity = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_identity = 0
     api_key = getattr(provider, "api_key", None) or ""
     identity = (
         provider.__class__.__name__,
@@ -621,6 +626,7 @@ def _provider_instance_cache_key(
         hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "",
         float(temperature),
         int(max_tokens),
+        loop_identity,
     )
     return hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()
 
@@ -748,8 +754,9 @@ async def close_all_providers():
 
     应在应用 shutdown 钩子中调用，以正确释放复用的连接。
     """
-    for provider in _provider_instances.values():
+    for provider in list(_provider_instances.values()):
         try:
             await provider.aclose()
         except Exception:
             logger.warning("Failed to close provider httpx client", exc_info=True)
+    _provider_instances.clear()

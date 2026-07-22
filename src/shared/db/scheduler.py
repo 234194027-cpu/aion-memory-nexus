@@ -1,16 +1,15 @@
 import asyncio
-import threading
 from datetime import datetime, timedelta, timezone
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from src.shared.db.database import async_session, sync_engine
 from src.shared.config import settings
 from src.execution.models.agent_profile import AgentProfile
-from src.memory.models.raw_event import RawEvent, ProcessingStatus
+from src.memory.models.raw_event import RawEvent, ProcessingStatus, SourceType
 from src.memory.models.committed_memory import CommittedMemory, CommittedStatus
 from src.memory.models.memory_embedding import MemoryEmbedding
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, case, or_, select, text
 import logging
 
 logging.basicConfig()
@@ -18,7 +17,7 @@ logging.getLogger('apscheduler').setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 _scheduler_started = False
 # PostgreSQL advisory locks are scoped to a database connection. Keeping this
 # one connection open makes exactly one API process the scheduler leader; a
@@ -187,7 +186,7 @@ def start_scheduler() -> bool:
 def stop_scheduler():
     global _scheduler_started
     if scheduler.running:
-        scheduler.shutdown()
+        scheduler.shutdown(wait=False)
         _scheduler_started = False
         logger.info("[Scheduler] Stopped")
     release_scheduler_leader_lock()
@@ -195,14 +194,11 @@ def stop_scheduler():
 
 def update_scheduler_from_config():
     try:
-        thread = threading.Thread(target=_update_scheduler_thread)
-        thread.daemon = True
-        thread.start()
+        asyncio.get_running_loop().create_task(_update_scheduler_async())
+    except RuntimeError:
+        logger.error("[Scheduler] Update config requires the application event loop")
     except Exception as e:
-        logger.error(f"[Scheduler] Update config error: {e}")
-
-def _update_scheduler_thread():
-    asyncio.run(_update_scheduler_async())
+        logger.error("[Scheduler] Update config error: %s", type(e).__name__)
 
 async def _update_scheduler_async():
     async with async_session() as session:
@@ -261,39 +257,63 @@ async def has_enabled_scheduler_agent(session) -> bool:
     return result.scalar_one_or_none() is not None
 
 def run_async(coro_func):
-    def wrapper():
+    async def wrapper():
         try:
-            asyncio.run(coro_func())
+            return await coro_func()
         except Exception as e:
-            logger.error(f"[Scheduler] Job error: {e}")
+            logger.error("[Scheduler] Job error: %s", e, exc_info=True)
     return wrapper
+
+
+async def select_pending_events(session, *, now: datetime, limit: int) -> list[RawEvent]:
+    """Select due events while keeping interactive work ahead of imports."""
+    due_queued = and_(
+        RawEvent.processing_status == ProcessingStatus.QUEUED,
+        or_(
+            RawEvent.processing_next_retry_at.is_(None),
+            RawEvent.processing_next_retry_at <= now,
+        ),
+    )
+    retryable_failed = and_(
+        RawEvent.processing_status == ProcessingStatus.FAILED,
+        RawEvent.processing_attempts < 3,
+        RawEvent.processing_next_retry_at.is_not(None),
+        RawEvent.processing_next_retry_at <= now,
+    )
+    source_priority = case(
+        (RawEvent.source_type == SourceType.CONVERSATION, 0),
+        (RawEvent.source_type == SourceType.MANUAL, 1),
+        else_=2,
+    )
+    result = await session.execute(
+        select(RawEvent)
+        .where(or_(due_queued, retryable_failed))
+        .order_by(source_priority.asc(), RawEvent.occurred_at.asc())
+        .limit(limit)
+    )
+    return list(result.scalars())
 
 @run_async
 async def scan_pending_events():
-    from src.memory.tasks.memory_extraction import _process_memory_event, recover_stale_extraction_events
+    from src.memory.tasks.memory_extraction import (
+        _process_memory_event,
+        recover_known_loop_failures,
+        recover_stale_extraction_events,
+    )
     
     async with async_session() as session:
         recovered = await recover_stale_extraction_events(session)
         if recovered:
             logger.warning("[Scheduler] Recovered %s stale extraction lease(s)", recovered)
         now = datetime.now(timezone.utc)
-        result = await session.execute(
-            select(RawEvent)
-            .where(
-                or_(
-                    RawEvent.processing_status == ProcessingStatus.QUEUED,
-                    and_(
-                        RawEvent.processing_status == ProcessingStatus.FAILED,
-                        RawEvent.processing_attempts < 3,
-                        RawEvent.processing_next_retry_at.is_not(None),
-                        RawEvent.processing_next_retry_at <= now,
-                    ),
-                )
-            )
-            .order_by(RawEvent.occurred_at.asc())
-            .limit(10)
+        loop_recovered = await recover_known_loop_failures(session, now=now)
+        if loop_recovered:
+            logger.warning("[Scheduler] Recovered %s legacy event-loop failure(s)", loop_recovered)
+        events = await select_pending_events(
+            session,
+            now=now,
+            limit=max(1, settings.WORKING_AGENT_SCAN_BATCH_SIZE),
         )
-        events = result.scalars().all()
         
         if not events:
             return

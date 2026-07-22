@@ -44,6 +44,7 @@ class WeComBotClient:
     CMD_SEND_MESSAGE = "aibot_send_msg"
     CMD_HEARTBEAT = "ping"
     HEARTBEAT_INTERVAL_SECONDS = 30
+    HEARTBEAT_STALE_SECONDS = 120
     DEFAULT_WELCOME_TEXT = "你好，我是人生记忆助手。你可以直接和我聊天、记录想法，或问我关于你过往记忆的问题。"
     
     def __init__(self, bot_id: str, secret: str):
@@ -60,6 +61,9 @@ class WeComBotClient:
         self._last_error: Optional[str] = None
         self._reconnect_count = 0
         self._max_reconnect = 10
+        self._last_frame_at: float | None = None
+        self._last_pong_at: float | None = None
+        self._connected_at: float | None = None
         self._send_lock = asyncio.Lock()
         # Sending after a dropped socket and the receive loop can observe the
         # same disconnect at almost the same moment.  Only one path may create
@@ -195,7 +199,7 @@ class WeComBotClient:
                 return {"errcode": -1, "errmsg": "websocket_send_failed", "last_error": self._last_error}
 
     def _is_ws_open(self) -> bool:
-        return bool(self._ws and self._connected and not self._ws.closed)
+        return bool(self._ws and self._connected and not getattr(self._ws, "closed", False))
 
     async def _reconnect_for_send(self) -> None:
         async with self._reconnect_lock:
@@ -256,6 +260,10 @@ class WeComBotClient:
                 self._connected = True
                 self._last_error = None
                 self._reconnect_count = 0
+                now = time.monotonic()
+                self._connected_at = now
+                self._last_frame_at = now
+                self._last_pong_at = now
                 self._receive_task = asyncio.create_task(self._receive_loop())
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(self._ws))
                 runtime_metrics.record_external_call("wecom_connection")
@@ -294,6 +302,10 @@ class WeComBotClient:
                 await asyncio.sleep(self.HEARTBEAT_INTERVAL_SECONDS)
                 if not (self._running and self._ws is ws and self._is_ws_open()):
                     return
+                last_seen = self._last_frame_at or self._connected_at or time.monotonic()
+                if time.monotonic() - last_seen > self.HEARTBEAT_STALE_SECONDS:
+                    await self._reconnect_after_disconnect(ws, "heartbeat_stale")
+                    return
                 await ws.send(json.dumps({
                     "cmd": self.CMD_HEARTBEAT,
                     "headers": {"req_id": str(uuid.uuid4())},
@@ -302,9 +314,8 @@ class WeComBotClient:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            # The receive loop owns reconnection.  This task only reports the
-            # failed heartbeat and leaves the active socket state unchanged.
             logger.warning("WeCom heartbeat failed: %s", _safe_wecom_error(exc))
+            await self._reconnect_after_disconnect(ws, _safe_wecom_error(exc))
     
     async def _receive_loop(self):
         ws = self._ws
@@ -314,6 +325,7 @@ class WeComBotClient:
             async for message in ws:
                 try:
                     data = json.loads(message)
+                    self._last_frame_at = time.monotonic()
                     cmd = data.get("cmd", "")
                     
                     if cmd in {self.CMD_MESSAGE_CALLBACK, self.CMD_LEGACY_MESSAGE}:
@@ -342,7 +354,7 @@ class WeComBotClient:
                         await self._handle_event_callback(data)
 
                     elif cmd == "aibot_pong":
-                        pass
+                        self._last_pong_at = self._last_frame_at
 
                     elif not cmd and data.get("errcode") == 0 and data.get("errmsg") == "ok":
                         # WeCom sends command-less success acknowledgements for
@@ -367,25 +379,43 @@ class WeComBotClient:
                 except Exception:
                     logger.warning("WS message parse error", exc_info=True)
                     continue
+            if self._receive_task is asyncio.current_task() and self._running and self._ws is ws:
+                await self._reconnect_after_disconnect(ws, "receive_loop_ended")
                     
         except websockets.exceptions.ConnectionClosed as exc:
             # A sender may already have installed a replacement socket.  A
             # stale receive loop must never reconnect over that subscription.
             if self._ws is not ws:
                 return
-            self._connected = False
-            self._last_error = _safe_wecom_error(exc)
-            logger.warning("WeCom socket closed; scheduling reconnect: %s", self._last_error)
-            if self._running and self._reconnect_count < self._max_reconnect:
-                self._reconnect_count += 1
-                await asyncio.sleep(min(5 * self._reconnect_count, 60))
-                await self._connect_ws()
+            logger.warning("WeCom socket closed; scheduling reconnect: %s", _safe_wecom_error(exc))
+            await self._reconnect_after_disconnect(ws, _safe_wecom_error(exc))
         except Exception as e:
             if self._ws is not ws:
                 return
-            self._last_error = _safe_wecom_error(e)
+            logger.warning("WeCom receive loop failed: %s", _safe_wecom_error(e))
+            await self._reconnect_after_disconnect(ws, _safe_wecom_error(e))
+
+    async def _reconnect_after_disconnect(self, ws, error: str) -> None:
+        """Replace a dead subscription once, regardless of which loop noticed it."""
+        async with self._reconnect_lock:
+            if self._ws is not ws or not self._running:
+                return
             self._connected = False
-            logger.warning("WeCom receive loop failed: %s", self._last_error)
+            self._last_error = error[:320]
+            self._ws = None
+            current = asyncio.current_task()
+            if self._heartbeat_task and self._heartbeat_task is not current:
+                self._heartbeat_task.cancel()
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            if self._reconnect_count >= self._max_reconnect:
+                logger.error("WeCom reconnect budget exhausted")
+                return
+            self._reconnect_count += 1
+            await asyncio.sleep(min(5 * self._reconnect_count, 60))
+            await self._connect_ws()
 
     async def _handle_event_callback(self, frame: Dict[str, Any]) -> None:
         """Handle non-message Bot callbacks without routing them as conversation text."""
@@ -438,18 +468,31 @@ class WeComBotClient:
             self._ws = None
         
         self._connected = False
+        self._last_frame_at = None
+        self._last_pong_at = None
+        self._connected_at = None
     
     def is_connected(self) -> bool:
-        return self._connected
+        if not self._is_ws_open():
+            return False
+        if self._receive_task is not None and self._receive_task.done():
+            return False
+        last_seen = self._last_frame_at or self._connected_at
+        return bool(last_seen and time.monotonic() - last_seen <= self.HEARTBEAT_STALE_SECONDS)
     
     def get_status(self) -> dict:
         return {
             "bot_id_configured": bool(self.bot_id),
             "secret_configured": bool(self.secret),
-            "connected": self._connected,
+            "connected": self.is_connected(),
             "running": self._running,
             "last_error": self._last_error,
             "reconnect_count": self._reconnect_count,
+            "last_frame_age_seconds": (
+                round(max(0.0, time.monotonic() - self._last_frame_at), 1)
+                if self._last_frame_at is not None else None
+            ),
+            "heartbeat_stale_seconds": self.HEARTBEAT_STALE_SECONDS,
         }
 
 

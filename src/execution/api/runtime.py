@@ -315,7 +315,7 @@ async def working_status(
     ]
     counts = {str(status): int(count) for status, count in case_rows}
     return {
-        "ledger_version": "memory-operations-v2.5.1",
+        "ledger_version": "memory-operations-v2.5.2",
         "case_counts": counts,
         "active_backlog": sum(
             counts.get(status, 0)
@@ -331,6 +331,12 @@ async def working_status(
         if durations_ms
         else None,
         "autonomous_memory_enabled": True,
+        "resource_budget": {
+            "daily_model_call_limit": settings.WORKING_AGENT_DAILY_MODEL_CALL_LIMIT,
+            "daily_maintenance_call_limit": settings.WORKING_AGENT_DAILY_MAINTENANCE_CALL_LIMIT,
+            "scan_batch_size": settings.WORKING_AGENT_SCAN_BATCH_SIZE,
+            "timezone": settings.WORKING_AGENT_BUDGET_TIMEZONE,
+        },
         "maintenance_actions": {str(action): int(count) for action, count in maintenance_rows},
         "maintenance_runs": {str(state): int(count) for state, count in maintenance_run_rows},
         "maintenance_token_used": int(maintenance_token_used or 0),

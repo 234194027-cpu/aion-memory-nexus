@@ -67,40 +67,39 @@ def test_trigger_extraction_prefers_celery_enqueue(monkeypatch) -> None:
         lambda event_id: enqueued.append(event_id),
     )
 
-    class UnexpectedThread:
-        def __init__(self, *args, **kwargs) -> None:
-            raise AssertionError("thread fallback should not start when Celery accepts the task")
-
-    monkeypatch.setattr(memory_extraction.threading, "Thread", UnexpectedThread)
+    monkeypatch.setattr(
+        memory_extraction,
+        "schedule_coroutine",
+        lambda _coroutine: (_ for _ in ()).throw(
+            AssertionError("local fallback should not start when Celery accepts the task")
+        ),
+    )
 
     memory_extraction.trigger_extraction("event-celery")
 
     assert enqueued == ["event-celery"]
 
 
-def test_trigger_extraction_falls_back_to_daemon_thread_when_enqueue_fails(monkeypatch) -> None:
+def test_trigger_extraction_falls_back_to_persistent_loop_when_enqueue_fails(monkeypatch) -> None:
     from src.memory.tasks import memory_extraction
+    from src.shared.config import settings
 
     def fail_enqueue(event_id: str) -> None:
         raise ConnectionError(f"broker unavailable for {event_id}")
 
-    started: list[tuple[object, tuple[object, ...], bool]] = []
+    scheduled: list[object] = []
 
-    class RecordingThread:
-        def __init__(self, *, target, args) -> None:
-            self.target = target
-            self.args = args
-            self.daemon = False
-
-        def start(self) -> None:
-            started.append((self.target, self.args, self.daemon))
+    def record_coroutine(coroutine) -> None:
+        scheduled.append(coroutine)
+        coroutine.close()
 
     monkeypatch.setattr(memory_extraction.process_memory_event, "delay", fail_enqueue)
-    monkeypatch.setattr(memory_extraction.threading, "Thread", RecordingThread)
+    monkeypatch.setattr(memory_extraction, "schedule_coroutine", record_coroutine)
+    monkeypatch.setattr(settings, "TESTING", False)
 
     memory_extraction.trigger_extraction("event-fallback")
 
-    assert started == [(memory_extraction._threaded_extraction, ("event-fallback",), True)]
+    assert len(scheduled) == 1
 
 
 def test_active_working_failure_never_bypasses_the_working_agent(monkeypatch) -> None:

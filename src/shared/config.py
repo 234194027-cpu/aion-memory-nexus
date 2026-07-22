@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     CONVERSATIONAL_AGENT_ENABLED: bool = True
     WORKING_AGENT_SHADOW_ENABLED: bool = False
     WORKING_AGENT_ACTIVE_ENABLED: bool = True
+    # Resource budgets are operational controls, not governance permissions.
+    # Keep them configurable so production backlogs can drain without code edits.
+    WORKING_AGENT_DAILY_MODEL_CALL_LIMIT: int = 96
+    WORKING_AGENT_DAILY_MAINTENANCE_CALL_LIMIT: int = 8
+    WORKING_AGENT_SCAN_BATCH_SIZE: int = 20
+    WORKING_AGENT_BUDGET_TIMEZONE: str = "Asia/Shanghai"
 
     # V3 Graphiti/Neo4j is a disposable, internal-only projection.  It is
     # deliberately disabled until the deployment has passed Shadow replay.

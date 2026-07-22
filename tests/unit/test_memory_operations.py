@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.execution.models.memory_operations import EvidenceSeal, MemoryMaintenanceRun, UserMemoryBrief
 from src.execution.runtime.conversation_coordinator import ConversationCoordinator
-from src.execution.services.memory_operations import MemoryOperationsCoordinator
+from src.execution.services.memory_operations import MemoryOperationsCoordinator, _memory_body_text
 from src.memory.models.committed_memory import CommittedMemory, CommittedStatus
 from src.memory.models.memory_source import MemorySource
 from src.memory.models.memory_type import MemoryType
@@ -39,6 +39,37 @@ def test_noise_event_is_completed_without_working_model() -> None:
         finally:
             await engine.dispose()
     asyncio.run(run())
+
+
+def test_legacy_memory_body_shapes_are_safe_for_brief_projection() -> None:
+    assert _memory_body_text(["大连", "河北高碑店"]) == "大连 河北高碑店"
+    assert _memory_body_text({"city": "大连", "other": ["高碑店"]}) == "大连 高碑店"
+
+
+def test_agent_api_explicit_words_still_use_microbatch() -> None:
+    event = RawEvent(
+        id="evt-agent-import",
+        user_id="u1",
+        source_type=SourceType.AGENT_API,
+        occurred_at=datetime.now(timezone.utc),
+        content="请记住这份外部 Agent 整理结果",
+        content_hash="agent-import",
+        sensitivity=SensitivityLevel.NORMAL,
+        visibility_scope=VisibilityScope.PERSONAL,
+        processing_status=ProcessingStatus.QUEUED,
+    )
+    assert MemoryOperationsCoordinator.classify_event(event) == "ordinary"
+
+
+def test_budget_resets_at_shanghai_midnight(monkeypatch) -> None:
+    from src.shared.config import settings
+
+    monkeypatch.setattr(settings, "WORKING_AGENT_BUDGET_TIMEZONE", "Asia/Shanghai")
+    start, end = MemoryOperationsCoordinator._budget_window(
+        datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    )
+    assert start == datetime(2026, 7, 21, 16, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 7, 22, 16, 0, tzinfo=timezone.utc)
 
 
 def test_ordinary_event_waits_for_microbatch_without_working_model() -> None:

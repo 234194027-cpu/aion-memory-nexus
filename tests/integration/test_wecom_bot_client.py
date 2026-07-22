@@ -41,6 +41,25 @@ def test_wecom_uses_application_heartbeat_instead_of_websocket_ping():
 
     assert WeComBotClient.CMD_HEARTBEAT == "ping"
     assert WeComBotClient.HEARTBEAT_INTERVAL_SECONDS == 30
+    assert WeComBotClient.HEARTBEAT_STALE_SECONDS >= 90
+
+
+def test_connected_status_rejects_stale_or_finished_connection(monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    from src.platform.channels.wecom import WeComBotClient
+
+    bot = WeComBotClient("bot", "secret")
+    bot._ws = SimpleNamespace(closed=False)
+    bot._running = True
+    bot._connected = True
+    bot._last_frame_at = time.monotonic() - bot.HEARTBEAT_STALE_SECONDS - 1
+    assert bot.is_connected() is False
+
+    bot._last_frame_at = time.monotonic()
+    bot._receive_task = SimpleNamespace(done=lambda: True)
+    assert bot.is_connected() is False
 
 
 def test_connect_disables_generic_websocket_ping(monkeypatch):
